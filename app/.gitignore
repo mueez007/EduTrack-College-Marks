@@ -1,3 +1,28 @@
+<<<<<<< HEAD
+# Flutter
+**/build/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+.idea/
+.vs/
+*.iml
+*.ipr
+*.iws
+*.log
+# macOS
+.DS_Store
+# Android
+**/android/local.properties
+**/android/app/google-services.json
+# iOS
+**/ios/Runner/GoogleService-Info.plist
+# VS Code
+.vscode/
+=======
 # Miscellaneous
 *.class
 *.log
@@ -43,3 +68,4 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+>>>>>>> d0afaf3 (updated working)

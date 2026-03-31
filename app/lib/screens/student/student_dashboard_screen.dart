@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-import '../login_screen.dart'; 
+import '../login_screen.dart';
 import 'student_subject_view_screen.dart'; // Import the detail view
 
 class StudentDashboardScreen extends StatefulWidget {
-  const StudentDashboardScreen({super.key});
+  final String? usn; // Add this parameter
+
+  const StudentDashboardScreen({super.key, this.usn});
 
   @override
   State<StudentDashboardScreen> createState() => _StudentDashboardScreenState();
@@ -26,20 +28,78 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
   @override
   void initState() {
     super.initState();
-    _studentId = _user?.uid;
-    _loadStudentDetails(); 
+
+    // Priority 1: Use USN from parameter (direct login)
+    // Priority 2: Use Firebase Auth user
+    if (widget.usn != null) {
+      _studentUsn = widget.usn;
+      _loadStudentByUsn();
+    } else {
+      _studentId = _user?.uid;
+      _loadStudentDetails();
+    }
   }
 
-  // Fetch student's initial details (USN, Batch) from Firestore
+  // Fetch student by USN directly (for password-less login)
+  Future<void> _loadStudentByUsn() async {
+    if (_studentUsn == null) return;
+
+    try {
+      // Query Firestore for student by USN
+      QuerySnapshot studentQuery = await FirebaseFirestore.instance
+          .collection('students')
+          .where('usn', isEqualTo: _studentUsn)
+          .limit(1)
+          .get();
+
+      if (studentQuery.docs.isNotEmpty) {
+        final studentDoc = studentQuery.docs.first;
+        final studentData = studentDoc.data() as Map<String, dynamic>;
+
+        setState(() {
+          _selectedBatchId = studentData['batchYear'];
+          _studentName = studentData['name'];
+          _studentId = studentDoc.id; // Store document ID
+        });
+
+        // Also create/update user record for Firebase Auth compatibility
+        final currentUser = FirebaseAuth.instance.currentUser;
+        if (currentUser != null) {
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(currentUser.uid)
+              .set({
+            'role': 'student',
+            'usn': _studentUsn,
+            'name': _studentName,
+            'batchYear': _selectedBatchId,
+            'studentId': studentDoc.id,
+            'createdAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+        }
+
+        _loadSemesterData();
+      } else {
+        print("Student with USN $_studentUsn not found");
+      }
+    } catch (e) {
+      print("Error loading student by USN: $e");
+    }
+  }
+
+  // Fetch student's initial details (USN, Batch) from Firestore (original method)
   Future<void> _loadStudentDetails() async {
     if (_studentId == null) return;
 
     try {
-      DocumentSnapshot userDoc = await FirebaseFirestore.instance.collection('users').doc(_studentId!).get();
+      DocumentSnapshot userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(_studentId!)
+          .get();
       if (userDoc.exists) {
         final data = userDoc.data() as Map<String, dynamic>;
         setState(() {
-          _selectedBatchId = data['batchYear']; 
+          _selectedBatchId = data['batchYear'];
           _studentUsn = data['usn'];
           _studentName = data['name'];
         });
@@ -82,13 +142,17 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
       Navigator.pushAndRemoveUntil(
         context,
         MaterialPageRoute(builder: (context) => const LoginScreen()),
-        (Route<dynamic> route) => false, 
+        (Route<dynamic> route) => false,
       );
     }
   }
-  
+
   // --- Rank Card UI Builder (Debit Card Style) ---
-  Widget _buildRankCard({required String sgpa, required String cgpa, required String rank, required String usn}) {
+  Widget _buildRankCard(
+      {required String sgpa,
+      required String cgpa,
+      required String rank,
+      required String usn}) {
     final Color primaryColor = Theme.of(context).primaryColor;
     final Color secondaryColor = primaryColor.withOpacity(0.7);
 
@@ -117,12 +181,14 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('SEMESTER $_selectedSemester', style: const TextStyle(color: Colors.white70, fontSize: 16)),
+                Text('SEMESTER $_selectedSemester',
+                    style:
+                        const TextStyle(color: Colors.white70, fontSize: 16)),
                 const Icon(Icons.school, color: Colors.white70, size: 28),
               ],
             ),
             const SizedBox(height: 20),
-            
+
             // CGPA & SGPA
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -130,27 +196,43 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('CGPA', style: TextStyle(color: Colors.white, fontSize: 14)),
-                    Text(cgpa, style: const TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.bold)),
+                    const Text('CGPA',
+                        style: TextStyle(color: Colors.white, fontSize: 14)),
+                    Text(cgpa,
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 32,
+                            fontWeight: FontWeight.bold)),
                   ],
                 ),
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    const Text('SGPA', style: TextStyle(color: Colors.white, fontSize: 14)),
-                    Text(sgpa, style: const TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.bold)),
+                    const Text('SGPA',
+                        style: TextStyle(color: Colors.white, fontSize: 14)),
+                    Text(sgpa,
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 32,
+                            fontWeight: FontWeight.bold)),
                   ],
                 ),
               ],
             ),
             const SizedBox(height: 20),
-            
+
             // RANK and USN
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('CLASS RANK: $rank', style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
-                Text(usn, style: const TextStyle(color: Colors.white70, fontSize: 16)),
+                Text('CLASS RANK: $rank',
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold)),
+                Text(usn,
+                    style:
+                        const TextStyle(color: Colors.white70, fontSize: 16)),
               ],
             ),
           ],
@@ -159,19 +241,32 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
     );
   }
 
-
   @override
   Widget build(BuildContext context) {
     if (_selectedBatchId == null) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator.adaptive()),
+      return Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const CircularProgressIndicator.adaptive(),
+              const SizedBox(height: 20),
+              Text(
+                widget.usn != null
+                    ? 'Loading data for USN: ${widget.usn}'
+                    : 'Loading student data...',
+                style: const TextStyle(color: Colors.grey),
+              ),
+            ],
+          ),
+        ),
       );
     }
 
-  // Construct the students collection document id (used across teacher-written docs)
-  final String studentDocId = '${_selectedBatchId}_$_studentUsn';
+    // Construct the students collection document id (used across teacher-written docs)
+    final String studentDocId = '${_selectedBatchId}_$_studentUsn';
 
-  return Scaffold(
+    return Scaffold(
       appBar: AppBar(
         title: Text('Welcome, ${_studentName ?? 'Student'}'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
@@ -189,7 +284,7 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
               height: 50,
               child: ListView.builder(
                 scrollDirection: Axis.horizontal,
-                itemCount: 8, 
+                itemCount: 8,
                 itemBuilder: (context, index) {
                   int semester = index + 1;
                   bool isSelected = semester == _selectedSemester;
@@ -207,9 +302,18 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
                         }
                       },
                       selectedColor: Theme.of(context).primaryColor,
-                      labelStyle: TextStyle(color: isSelected ? Colors.white : Theme.of(context).textTheme.bodyLarge?.color),
-                      backgroundColor: Theme.of(context).chipTheme.backgroundColor ?? Colors.grey[200],
-                      shape: StadiumBorder(side: BorderSide(color: isSelected ? Theme.of(context).primaryColor : Colors.grey)),
+                      labelStyle: TextStyle(
+                          color: isSelected
+                              ? Colors.white
+                              : Theme.of(context).textTheme.bodyLarge?.color),
+                      backgroundColor:
+                          Theme.of(context).chipTheme.backgroundColor ??
+                              Colors.grey[200],
+                      shape: StadiumBorder(
+                          side: BorderSide(
+                              color: isSelected
+                                  ? Theme.of(context).primaryColor
+                                  : Colors.grey)),
                     ),
                   );
                 },
@@ -223,42 +327,50 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
             stream: _resultStream,
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
-                return const Center(child: Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator.adaptive()));
+                return const Center(
+                    child: Padding(
+                        padding: EdgeInsets.all(20),
+                        child: CircularProgressIndicator.adaptive()));
               }
-              
+
               String sgpa = 'N/A', cgpa = 'N/A', rank = 'N/A';
-              
+
               if (snapshot.hasData && snapshot.data!.exists) {
                 final data = snapshot.data!.data() as Map<String, dynamic>;
                 sgpa = (data['sgpa'] as num?)?.toStringAsFixed(2) ?? 'N/A';
                 cgpa = (data['cgpa'] as num?)?.toStringAsFixed(2) ?? 'N/A';
-                rank = data['rank']?.toString() ?? 'N/A'; // Assuming rank is calculated and saved by teacher logic
+                rank = data['rank']?.toString() ??
+                    'N/A'; // Assuming rank is calculated and saved by teacher logic
               }
 
-              return _buildRankCard(sgpa: sgpa, cgpa: cgpa, rank: rank, usn: _studentUsn ?? '');
+              return _buildRankCard(
+                  sgpa: sgpa, cgpa: cgpa, rank: rank, usn: _studentUsn ?? '');
             },
           ),
-          
+
           const SizedBox(height: 16),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16.0),
-            child: Text('Subjects for Semester $_selectedSemester', style: Theme.of(context).textTheme.titleLarge),
+            child: Text('Subjects for Semester $_selectedSemester',
+                style: Theme.of(context).textTheme.titleLarge),
           ),
           const Divider(),
-          
+
           // --- 2. Subject List ---
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
               stream: _subjectsStream,
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator.adaptive());
+                  return const Center(
+                      child: CircularProgressIndicator.adaptive());
                 }
                 if (snapshot.hasError) {
                   return Center(child: Text('Error: ${snapshot.error}'));
                 }
                 if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                  return const Center(child: Text('No subjects recorded for this semester.'));
+                  return const Center(
+                      child: Text('No subjects recorded for this semester.'));
                 }
 
                 final subjects = snapshot.data!.docs;
@@ -266,32 +378,35 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
                   itemCount: subjects.length,
                   itemBuilder: (context, index) {
                     final subjectDoc = subjects[index];
-                    final subjectData = subjectDoc.data() as Map<String, dynamic>;
+                    final subjectData =
+                        subjectDoc.data() as Map<String, dynamic>;
                     final name = subjectData['subjectName'] ?? 'No Name';
                     final code = subjectData['subjectCode'] ?? 'No Code';
 
                     return Card(
-                      margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                      margin: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 5),
                       elevation: 1,
                       child: ListTile(
                         leading: const Icon(Icons.menu_book),
                         title: Text('$code - $name'),
-                        subtitle: Text('Credits: ${subjectData['credits'] ?? '?'}'),
+                        subtitle:
+                            Text('Credits: ${subjectData['credits'] ?? '?'}'),
                         trailing: const Icon(Icons.arrow_forward_ios),
                         onTap: () {
-                           // Navigate to Subject View, passing student and subject info
-                           Navigator.push(
-                             context,
-                             MaterialPageRoute(
-                               builder: (context) => StudentSubjectViewScreen(
-                                 // pass students collection doc id (batch_usn) so it matches teacher-written docs
-                                 studentId: studentDocId,
-                                 subjectId: subjectDoc.id, 
-                                 subjectName: name,
-                                 subjectData: subjectData, 
-                               ),
-                             ),
-                           );
+                          // Navigate to Subject View, passing student and subject info
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => StudentSubjectViewScreen(
+                                // pass students collection doc id (batch_usn) so it matches teacher-written docs
+                                studentId: studentDocId,
+                                subjectId: subjectDoc.id,
+                                subjectName: name,
+                                subjectData: subjectData,
+                              ),
+                            ),
+                          );
                         },
                       ),
                     );
