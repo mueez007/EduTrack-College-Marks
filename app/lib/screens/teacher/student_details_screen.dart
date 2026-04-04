@@ -404,34 +404,59 @@ class _StudentDetailsScreenState extends State<StudentDetailsScreen> {
               final currentSemester =
                   studentData['currentSemester'] as int? ?? 1;
 
-              return Card(
-                margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                elevation: 2,
-                child: ListTile(
-                  leading: CircleAvatar(
-                    backgroundColor: Theme.of(context).primaryColorLight,
-                    child: Text(
-                      name.isNotEmpty ? name[0].toUpperCase() : '?',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        color: Theme.of(context).primaryColorDark,
+              return Dismissible(
+                key: Key(studentDoc.id),
+                direction: DismissDirection.endToStart,
+                confirmDismiss: (direction) async {
+                  _showDeleteStudentDialog(studentDoc.id, name, usn);
+                  return false; // We handle deletion in the dialog
+                },
+                background: Container(
+                  alignment: Alignment.centerRight,
+                  padding: const EdgeInsets.only(right: 20),
+                  color: Colors.red,
+                  child: const Icon(Icons.delete, color: Colors.white),
+                ),
+                child: Card(
+                  margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  elevation: 2,
+                  child: ListTile(
+                    leading: CircleAvatar(
+                      backgroundColor: Theme.of(context).primaryColorLight,
+                      child: Text(
+                        name.isNotEmpty ? name[0].toUpperCase() : '?',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Theme.of(context).primaryColorDark,
+                        ),
                       ),
                     ),
-                  ),
-                  title: Text(
-                    name,
-                    style: const TextStyle(fontWeight: FontWeight.w500),
-                  ),
-                  subtitle: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('USN: $usn'),
-                      Text('Phone: $number | Sem: $currentSemester'),
-                    ],
-                  ),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.edit, size: 20),
-                    onPressed: () => _editStudent(studentDoc.id, studentData),
+                    title: Text(
+                      name,
+                      style: const TextStyle(fontWeight: FontWeight.w500),
+                    ),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('USN: $usn'),
+                        Text('Phone: $number | Sem: $currentSemester'),
+                      ],
+                    ),
+                    trailing: PopupMenuButton<String>(
+                      icon: const Icon(Icons.more_vert, size: 20, color: Colors.grey),
+                      onSelected: (value) {
+                        if (value == 'edit') {
+                          _editStudent(studentDoc.id, studentData);
+                        } else if (value == 'delete') {
+                          _showDeleteStudentDialog(studentDoc.id, name, usn);
+                        }
+                      },
+                      itemBuilder: (context) => [
+                        const PopupMenuItem(value: 'edit', child: ListTile(leading: Icon(Icons.edit), title: Text('Edit'), dense: true, contentPadding: EdgeInsets.zero)),
+                        const PopupMenuItem(value: 'delete', child: ListTile(leading: Icon(Icons.delete, color: Colors.red), title: Text('Delete', style: TextStyle(color: Colors.red)), dense: true, contentPadding: EdgeInsets.zero)),
+                      ],
+                    ),
+                    onTap: () => _editStudent(studentDoc.id, studentData),
                   ),
                 ),
               );
@@ -456,6 +481,124 @@ class _StudentDetailsScreenState extends State<StudentDetailsScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  // --- Delete Student Dialog ---
+  void _showDeleteStudentDialog(String studentDocId, String studentName, String usn) {
+    showDialog(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        bool isDeleting = false;
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Delete Student?'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  RichText(
+                    text: TextSpan(
+                      style: Theme.of(context).textTheme.bodyMedium,
+                      children: [
+                        const TextSpan(text: 'Are you sure you want to delete '),
+                        TextSpan(text: '$studentName ($usn)', style: const TextStyle(fontWeight: FontWeight.bold)),
+                        const TextSpan(text: '?'),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.red.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.red.shade200),
+                    ),
+                    child: const Row(
+                      children: [
+                        Icon(Icons.warning_amber, color: Colors.red, size: 20),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'This will also delete ALL marks, final exam marks, and semester results for this student.',
+                            style: TextStyle(color: Colors.red, fontSize: 12),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: isDeleting ? null : () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                  onPressed: isDeleting ? null : () async {
+                    setDialogState(() => isDeleting = true);
+                    try {
+                      final batch = FirebaseFirestore.instance.batch();
+                      
+                      // Delete from marks collection
+                      final marksSnap = await FirebaseFirestore.instance
+                          .collection('marks')
+                          .where('studentRef', isEqualTo: FirebaseFirestore.instance.doc('students/$studentDocId'))
+                          .get();
+                      for (var doc in marksSnap.docs) {
+                        batch.delete(doc.reference);
+                      }
+
+                      // Delete from finalExamMarks collection
+                      final finalMarksSnap = await FirebaseFirestore.instance
+                          .collection('finalExamMarks')
+                          .where('studentRef', isEqualTo: FirebaseFirestore.instance.doc('students/$studentDocId'))
+                          .get();
+                      for (var doc in finalMarksSnap.docs) {
+                        batch.delete(doc.reference);
+                      }
+
+                      // Delete from semesterResults collection
+                      final resultsSnap = await FirebaseFirestore.instance
+                          .collection('semesterResults')
+                          .where('studentId', isEqualTo: studentDocId)
+                          .get();
+                      for (var doc in resultsSnap.docs) {
+                        batch.delete(doc.reference);
+                      }
+
+                      // Delete the student document itself
+                      batch.delete(FirebaseFirestore.instance.collection('students').doc(studentDocId));
+
+                      await batch.commit();
+
+                      if (!dialogContext.mounted) return;
+                      Navigator.of(dialogContext).pop();
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('$studentName deleted with all related data.'), backgroundColor: Colors.green),
+                        );
+                      }
+                    } catch (e) {
+                      setDialogState(() => isDeleting = false);
+                      if (!dialogContext.mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Error deleting: $e'), backgroundColor: Colors.red),
+                      );
+                    }
+                  },
+                  child: isDeleting
+                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : const Text('Delete', style: TextStyle(color: Colors.white)),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 

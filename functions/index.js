@@ -117,8 +117,33 @@ exports.calculateFinalGrade = functions.firestore
 
 
 /**
+ * VTU Grade Point Mapping (CBCS scheme for engineering students in Karnataka)
+ * Maps % of marks (scaled to 100) to grade points
+ *
+ *   O  (Outstanding)   : 90-100 → GP 10
+ *   A+ (Excellent)     : 80-89  → GP 9
+ *   A  (Very Good)     : 70-79  → GP 8
+ *   B+ (Good)          : 60-69  → GP 7
+ *   B  (Above Average) : 55-59  → GP 6
+ *   C  (Average)       : 50-54  → GP 5
+ *   P  (Pass)          : 40-49  → GP 4
+ *   F  (Fail)          : 0-39   → GP 0
+ */
+function getVtuGradePoint(marksPercentage) {
+  if (marksPercentage >= 90) return 10;  // O  - Outstanding
+  if (marksPercentage >= 80) return 9;   // A+ - Excellent
+  if (marksPercentage >= 70) return 8;   // A  - Very Good
+  if (marksPercentage >= 60) return 7;   // B+ - Good
+  if (marksPercentage >= 55) return 6;   // B  - Above Average
+  if (marksPercentage >= 50) return 5;   // C  - Average
+  if (marksPercentage >= 40) return 4;   // P  - Pass
+  return 0;                              // F  - Fail
+}
+
+/**
  * TRIGGER 3 (CALLABLE):
  * Calculates SGPA and CGPA for all students in a semester.
+ * Uses VTU Credit-Based SGPA Formula: SGPA = Σ(Ci × Gi) / Σ(Ci)
  * This is triggered by the teacher pressing a button in the app.
  */
 exports.calculateSemesterResults = functions.https.onCall(async (data) => {
@@ -130,36 +155,78 @@ exports.calculateSemesterResults = functions.https.onCall(async (data) => {
   }
 
   try {
+    // 1. Fetch all subjects for this batch/semester to get credits and maxSubjectTotal
+    const subjectsSnapshot = await db.collection("subjects")
+                                    .where("batchYear", "==", batchYear)
+                                    .where("semester", "==", semester).get();
+    
+    // Build a map: subjectDocRef.path -> { credits, maxSubjectTotal }
+    const subjectInfoMap = {};
+    for (const subDoc of subjectsSnapshot.docs) {
+      const subData = subDoc.data();
+      subjectInfoMap[subDoc.ref.path] = {
+        credits: subData.credits || 0,
+        maxSubjectTotal: subData.maxSubjectTotal || 100,
+      };
+    }
+
+    // 2. Get all students in the batch
     const students = await db.collection("students")
                             .where("batchYear", "==", batchYear).get();
 
     for (const studentDoc of students.docs) {
       const student = studentDoc.data();
       
-      // 1. Find all their final marks for that semester
+      // 3. Find all their final marks for that semester
       const marksQuery = await db.collection("finalExamMarks")
                                 .where("studentRef", "==", studentDoc.ref)
                                 .where("semester", "==", semester).get();
       
       let totalMarksObtained = 0;
-      let subjectCount = marksQuery.docs.length;
+      let sumCreditGradeProduct = 0; // Σ(Ci × Gi)
+      let sumCredits = 0;             // Σ(Ci)
       
       for (const doc of marksQuery.docs) {
-        totalMarksObtained += doc.data().calculated_total || 0;
+        const markData = doc.data();
+        const calculatedTotal = markData.calculated_total || 0;
+        totalMarksObtained += calculatedTotal;
+        
+        // Get subject info (credits and maxSubjectTotal)
+        let credits = 0;
+        let maxSubjectTotal = 100;
+        
+        if (markData.subjectRef) {
+          const subjectPath = markData.subjectRef.path;
+          if (subjectInfoMap[subjectPath]) {
+            credits = subjectInfoMap[subjectPath].credits;
+            maxSubjectTotal = subjectInfoMap[subjectPath].maxSubjectTotal;
+          }
+        }
+        
+        // Scale marks to 100 if maxSubjectTotal is not 100
+        let scaledMarks = calculatedTotal;
+        if (maxSubjectTotal !== 100 && maxSubjectTotal > 0) {
+          scaledMarks = (calculatedTotal / maxSubjectTotal) * 100;
+        }
+        
+        // Get VTU grade point and accumulate
+        const gradePoint = getVtuGradePoint(scaledMarks);
+        sumCreditGradeProduct += (credits * gradePoint);
+        sumCredits += credits;
       }
       
-      // 2. --- SGPA LOGIC ---
+      // 4. --- SGPA LOGIC (VTU Credit-Based) ---
+      // SGPA = Σ(Ci × Gi) / Σ(Ci)
       let sgpa = 0;
-      if (subjectCount > 0) {
-        // (Total / MaxTotal) * 10
-        // e.g., (640 / 800) * 10 = 8.0
-        const totalMaxMarks = subjectCount * 100;
-        sgpa = (totalMarksObtained / totalMaxMarks) * 10;
+      if (sumCredits > 0) {
+        sgpa = sumCreditGradeProduct / sumCredits;
+        // Truncate to 2 decimal places (no rounding)
+        sgpa = Math.floor(sgpa * 100) / 100;
       }
       
-      // 3. --- CGPA LOGIC ---
+      // 5. --- CGPA LOGIC ---
       const prevResultsQuery = await db.collection("semesterResults")
-                                      .where("studentRef", "==", studentDoc.ref)
+                                      .where("studentId", "==", studentDoc.id)
                                       .where("semester", "<", semester).get();
                                       
       let sgpaSum = sgpa; // Start with the new, current SGPA
@@ -171,17 +238,20 @@ exports.calculateSemesterResults = functions.https.onCall(async (data) => {
       }
       
       // (Sem1 + Sem2 + Sem3) / 3
-      const cgpa = sgpaSum / semesterCount;
+      let cgpa = sgpaSum / semesterCount;
+      // Truncate to 2 decimal places
+      cgpa = Math.floor(cgpa * 100) / 100;
       
-      // 4. Save the final results
-      const resultDocId = `${student.usn}_S${semester}`;
+      // 6. Save the final results
+      const resultDocId = `${studentDoc.id}_S${semester}`;
       await db.collection("semesterResults").doc(resultDocId).set({
         batchYear: batchYear,
         semester: semester,
-        studentRef: studentDoc.ref,
+        studentId: studentDoc.id,
         studentName: student.name, // Store name for easier sorting
+        usn: student.usn,
         totalMarksObtained: totalMarksObtained,
-        totalMaxMarks: subjectCount * 100,
+        totalCredits: sumCredits,
         sgpa: sgpa,
         cgpa: cgpa
       });

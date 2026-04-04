@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -66,6 +67,8 @@ class _FinalExamMarksScreenState extends State<FinalExamMarksScreen> {
 
   final MarkCalculationService _markCalculator = MarkCalculationService();
   final Map<String, FocusNode> _focusNodes = {};
+  // Debounce timers for auto-save (one per student+subject)
+  final Map<String, Timer> _debounceTimers = {};
 
   @override
   void initState() {
@@ -79,6 +82,7 @@ class _FinalExamMarksScreenState extends State<FinalExamMarksScreen> {
 
   @override
   void dispose() {
+    _debounceTimers.forEach((_, timer) => timer.cancel());
     _focusNodes.forEach((_, node) => node.dispose());
     _studentFinalMarks.forEach((studentModel) {
       studentModel.subjectMarks.forEach((_, subjectData) {
@@ -181,6 +185,27 @@ class _FinalExamMarksScreenState extends State<FinalExamMarksScreen> {
                 subjectData: subjectDataMap,
               );
 
+          // c2) AUTO-REPAIR: If finalExamMarks doc exists but has wrong/missing iaFinal,
+          // update it immediately so student view shows correct data
+          if (finalMarkSnapshot.exists && iaFinalMark != null && examFinalMark != null) {
+            final existingData = finalMarkSnapshot.data() as Map<String, dynamic>;
+            final existingIaFinal = (existingData['iaFinal'] as num?)?.toDouble();
+            final existingTotal = (existingData['calculated_total'] as num?)?.toDouble();
+            
+            // Fix if iaFinal is missing/wrong OR calculated_total is wrong
+            if (existingIaFinal != iaFinalMark || existingTotal != calculatedTotalMark) {
+              // Fire-and-forget update to fix stale data
+              FirebaseFirestore.instance
+                  .collection('finalExamMarks')
+                  .doc(finalMarkDocId)
+                  .update({
+                'iaFinal': iaFinalMark,
+                'calculated_total': calculatedTotalMark,
+              }).catchError((e) => print('Auto-repair failed for $finalMarkDocId: $e'));
+              print('[AUTO-REPAIR] Fixed finalExamMarks/$finalMarkDocId: iaFinal=$iaFinalMark, total=$calculatedTotalMark');
+            }
+          }
+
           // d) Create Controller and Focus Node
           final controller = TextEditingController(
             text: examFinalMark?.toString() ?? '',
@@ -248,23 +273,40 @@ class _FinalExamMarksScreenState extends State<FinalExamMarksScreen> {
     }
 
     try {
-      // Recalculate Total locally
+      // Re-fetch the latest iaFinal from the marks collection
+      // This ensures we always use the correct value even if IA marks were updated
+      double? latestIaFinal = subjectData.iaFinal;
+      final iaMarkDocId = '${studentModel.studentId}_$subjectId';
+      try {
+        DocumentSnapshot iaMarkSnapshot = await FirebaseFirestore.instance
+            .collection('marks')
+            .doc(iaMarkDocId)
+            .get();
+        if (iaMarkSnapshot.exists) {
+          final iaMarkData = iaMarkSnapshot.data() as Map<String, dynamic>;
+          latestIaFinal = (iaMarkData['calculated_iaFinal'] as num?)?.toDouble();
+        }
+      } catch (e) {
+        print('Warning: Could not fetch latest iaFinal: $e');
+      }
+
+      // Recalculate Total locally using latest iaFinal
       double newCalculatedTotal = _markCalculator.calculateTotalMarksLocal(
-        iaFinal: subjectData.iaFinal,
+        iaFinal: latestIaFinal,
         examFinal: examMark,
         subjectData: subjectData.subjectDataMap,
       );
 
       // Prepare data for Firestore ('finalExamMarks' collection)
       Map<String, dynamic> dataToSave = {
-        'iaFinal': subjectData.iaFinal,
+        'iaFinal': latestIaFinal,
         'examFinal': examMark,
         'calculated_total': newCalculatedTotal,
 
         // --- AUTOMATION FIELDS ADDED ---
-        'semester': _selectedSemester, // ✅ Already exists
-        'sent': false, // ✅ ADDED: Automation flag
-        'markType': 'FINAL_EXAM', // ✅ ADDED: Type of mark
+        'semester': _selectedSemester,
+        'sent': false,
+        'markType': 'FINAL_EXAM',
 
         // -----------------------------
         'batchYear': _selectedBatchId,
@@ -332,12 +374,37 @@ class _FinalExamMarksScreenState extends State<FinalExamMarksScreen> {
           if (intValue < 0 || intValue > maxExamMark) return 'Err';
           return null;
         },
+        onChanged: (value) {
+          // Live preview of total
+          int? examMark = int.tryParse(value);
+          if (examMark != null) {
+            double previewTotal = _markCalculator.calculateTotalMarksLocal(
+              iaFinal: subjectData.iaFinal,
+              examFinal: examMark,
+              subjectData: subjectData.subjectDataMap,
+            );
+            if (mounted) {
+              setState(() {
+                subjectData.examFinal = examMark;
+                subjectData.calculatedTotal = previewTotal;
+              });
+            }
+          }
+          
+          // Auto-save with debounce (1.5 seconds after last keystroke)
+          final debounceKey = '${studentModel.studentId}_$subjectId';
+          _debounceTimers[debounceKey]?.cancel();
+          _debounceTimers[debounceKey] = Timer(
+            const Duration(milliseconds: 1500),
+            () => _saveFinalMark(studentModel, subjectId),
+          );
+        },
         onFieldSubmitted: (_) {
+          // Cancel pending debounce and save immediately
+          final debounceKey = '${studentModel.studentId}_$subjectId';
+          _debounceTimers[debounceKey]?.cancel();
           _saveFinalMark(studentModel, subjectId);
           subjectData.focusNode.unfocus();
-        },
-        onEditingComplete: () {
-          _saveFinalMark(studentModel, subjectId);
         },
       ),
     );

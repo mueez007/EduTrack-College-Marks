@@ -99,11 +99,12 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
                     ),
                     TextFormField(
                       controller: creditsController,
-                      decoration: const InputDecoration(labelText: "Credits"),
+                      decoration: const InputDecoration(labelText: "Credits (0 for no weightage)"),
                       keyboardType: TextInputType.number,
                       validator: (value) {
                         if (value == null || value.isEmpty) return 'Required';
-                        if (int.tryParse(value) == null || int.parse(value) <= 0) return 'Must be > 0';
+                        final parsed = int.tryParse(value);
+                        if (parsed == null || parsed < 0) return 'Must be >= 0';
                         return null;
                       },
                       textInputAction: TextInputAction.next,
@@ -281,6 +282,239 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
     );
   }
 
+  // --- Edit Subject Dialog ---
+  void _showEditSubjectDialog(String subjectDocId, Map<String, dynamic> existingData) {
+    final nameController = TextEditingController(text: existingData['subjectName'] ?? '');
+    final codeController = TextEditingController(text: existingData['subjectCode'] ?? '');
+    final creditsController = TextEditingController(text: (existingData['credits'] ?? 0).toString());
+    final formKey = GlobalKey<FormState>();
+    bool isSaving = false;
+
+    String? dialogSelectedIaRule = existingData['iaCalculationRule'] ?? _iaRuleOptions.keys.first;
+    String? dialogSelectedFinalExamRule = existingData['finalExamRule'] ?? _finalExamRuleOptions.keys.first;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext dialogContext) {
+        return StatefulBuilder(
+          builder: (stfContext, setDialogState) {
+            return AlertDialog(
+              title: Text("Edit Subject"),
+              content: SingleChildScrollView(
+                child: Form(
+                  key: formKey,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      TextFormField(
+                        controller: nameController,
+                        decoration: const InputDecoration(labelText: "Subject Name"),
+                        validator: (value) => value == null || value.isEmpty ? 'Required' : null,
+                        textInputAction: TextInputAction.next,
+                      ),
+                      TextFormField(
+                        controller: codeController,
+                        decoration: const InputDecoration(labelText: "Subject Code"),
+                        enabled: false, // Code cannot be changed as it's part of the doc ID
+                        textCapitalization: TextCapitalization.characters,
+                      ),
+                      TextFormField(
+                        controller: creditsController,
+                        decoration: const InputDecoration(labelText: "Credits (0 for no weightage)"),
+                        keyboardType: TextInputType.number,
+                        validator: (value) {
+                          if (value == null || value.isEmpty) return 'Required';
+                          final parsed = int.tryParse(value);
+                          if (parsed == null || parsed < 0) return 'Must be >= 0';
+                          return null;
+                        },
+                        textInputAction: TextInputAction.next,
+                      ),
+                      const SizedBox(height: 15),
+                      DropdownButtonFormField<String>(
+                        value: dialogSelectedIaRule,
+                        decoration: const InputDecoration(labelText: 'IA Calculation Rule', border: OutlineInputBorder()),
+                        items: _iaRuleOptions.entries.map((entry) {
+                          return DropdownMenuItem<String>(
+                            value: entry.key,
+                            child: Text(entry.value, overflow: TextOverflow.ellipsis, maxLines: 2),
+                          );
+                        }).toList(),
+                        onChanged: (String? newValue) {
+                          setDialogState(() { dialogSelectedIaRule = newValue; });
+                        },
+                        isExpanded: true,
+                      ),
+                      const SizedBox(height: 15),
+                      DropdownButtonFormField<String>(
+                        value: dialogSelectedFinalExamRule,
+                        decoration: const InputDecoration(labelText: 'Final Exam/Total Rule', border: OutlineInputBorder()),
+                        items: _finalExamRuleOptions.entries.map((entry) {
+                          return DropdownMenuItem<String>(
+                            value: entry.key,
+                            child: Text(entry.value, overflow: TextOverflow.ellipsis, maxLines: 2),
+                          );
+                        }).toList(),
+                        onChanged: (String? newValue) {
+                          setDialogState(() { dialogSelectedFinalExamRule = newValue; });
+                        },
+                        isExpanded: true,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: <Widget>[
+                TextButton(
+                  onPressed: isSaving ? null : () => Navigator.of(dialogContext).pop(),
+                  child: const Text("Cancel"),
+                ),
+                ElevatedButton(
+                  onPressed: isSaving ? null : () async {
+                    if (formKey.currentState!.validate()) {
+                      setDialogState(() => isSaving = true);
+
+                      final String name = nameController.text.trim();
+                      final int credits = int.parse(creditsController.text.trim());
+                      final String iaRule = dialogSelectedIaRule!;
+                      final String finalExamRule = dialogSelectedFinalExamRule!;
+
+                      // Recalculate max marks based on rules
+                      int maxInternalTotal = 50;
+                      int maxExamTotal = 50;
+                      int maxSubjectTotal = 100;
+                      int baseInternalMax = 40;
+                      int maxProject = 0;
+                      int maxAssignment = 0;
+                      int maxLab = 0;
+                      int maxExamInput = 100;
+
+                      if (iaRule == 'SEM_5_6_SCHEMA') {
+                        maxProject = 25;
+                      } else if (iaRule == 'SEM_SPECIAL_100_MARK_SCHEMA') {
+                        baseInternalMax = 30;
+                        maxProject = 25;
+                      } else if (iaRule == 'BEST_2_OF_3_AVG') {
+                        baseInternalMax = 25;
+                        maxAssignment = 10;
+                        maxLab = 25;
+                      }
+
+                      if (finalExamRule == 'HUNDRED_REDUCED_TO_FIFTY') {
+                        maxExamInput = 100;
+                        maxExamTotal = 50;
+                      } else if (finalExamRule == 'FIFTY_FIFTY_RAW') {
+                        maxExamInput = 50;
+                        maxExamTotal = 50;
+                      } else if (finalExamRule == 'THIRTY_THIRTY_RAW') {
+                        maxExamTotal = 15;
+                        maxInternalTotal = 15;
+                        maxSubjectTotal = 30;
+                        maxExamInput = 50;
+                      }
+
+                      try {
+                        await FirebaseFirestore.instance.collection('subjects').doc(subjectDocId).update({
+                          'subjectName': name,
+                          'credits': credits,
+                          'iaCalculationRule': iaRule,
+                          'finalExamRule': finalExamRule,
+                          'maxSubjectTotal': maxSubjectTotal,
+                          'maxInternalTotal': maxInternalTotal,
+                          'maxExamTotal': maxExamTotal,
+                          'baseInternalMax': baseInternalMax,
+                          'maxProject': maxProject,
+                          'maxAssignment': maxAssignment,
+                          'maxLab': maxLab,
+                          'maxExamInput': maxExamInput,
+                          'updatedAt': FieldValue.serverTimestamp(),
+                        });
+
+                        if (!dialogContext.mounted) return;
+                        Navigator.of(dialogContext).pop();
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Subject updated successfully.'), backgroundColor: Colors.green),
+                          );
+                        }
+                      } catch (e) {
+                        setDialogState(() => isSaving = false);
+                        if (!dialogContext.mounted) return;
+                        ScaffoldMessenger.of(dialogContext).showSnackBar(
+                          SnackBar(content: Text('Failed to update: $e'), backgroundColor: Colors.red),
+                        );
+                      }
+                    }
+                  },
+                  child: isSaving
+                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : const Text("Save Changes"),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // --- Delete Subject ---
+  void _deleteSubject(String subjectDocId, String subjectCode) {
+    showDialog(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          title: const Text('Delete Subject?'),
+          content: RichText(
+            text: TextSpan(
+              style: Theme.of(context).textTheme.bodyMedium,
+              children: [
+                const TextSpan(text: 'Are you sure you want to delete '),
+                TextSpan(text: subjectCode, style: const TextStyle(fontWeight: FontWeight.bold)),
+                const TextSpan(text: '?\n\n'),
+                const TextSpan(
+                  text: '⚠️ This will NOT delete any marks or final exam data already entered for this subject. Those must be cleaned up manually if needed.',
+                  style: TextStyle(color: Colors.orange, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+              onPressed: () async {
+                try {
+                  await FirebaseFirestore.instance.collection('subjects').doc(subjectDocId).delete();
+                  if (!dialogContext.mounted) return;
+                  Navigator.of(dialogContext).pop();
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Subject $subjectCode deleted.'), backgroundColor: Colors.green),
+                    );
+                  }
+                } catch (e) {
+                  if (!dialogContext.mounted) return;
+                  Navigator.of(dialogContext).pop();
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Error deleting: $e'), backgroundColor: Colors.red),
+                    );
+                  }
+                }
+              },
+              child: const Text('Delete', style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   // --- Navigation and Build methods remain the same ---
   void _navigateToMarksEntry(String subjectId, String subjectCode, String subjectName, Map<String, dynamic> subjectData) {
      Navigator.push(
@@ -383,18 +617,48 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
                      final code = subjectData['subjectCode'] as String? ?? 'No Code';
                      final credits = (subjectData['credits'] as num?)?.toString() ?? '?';
 
-                     return Card(
-                       margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                       elevation: 1.5,
-                       child: ListTile(
-                         leading: CircleAvatar( 
-                            backgroundColor: Theme.of(context).colorScheme.secondaryContainer,
-                            child: Text(credits, style: TextStyle(fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.onSecondaryContainer))
-                          ),
-                         title: Text(name), 
-                         subtitle: Text('Code: $code | Credits: $credits'), 
-                         trailing: const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey),
-                         onTap: () => _navigateToMarksEntry(subjectDoc.id, code, name, subjectData), 
+                     return Dismissible(
+                       key: Key(subjectDoc.id),
+                       direction: DismissDirection.endToStart,
+                       confirmDismiss: (direction) async {
+                         _deleteSubject(subjectDoc.id, code);
+                         return false; // We handle deletion in the dialog
+                       },
+                       background: Container(
+                         alignment: Alignment.centerRight,
+                         padding: const EdgeInsets.only(right: 20),
+                         color: Colors.red,
+                         child: const Icon(Icons.delete, color: Colors.white),
+                       ),
+                       child: Card(
+                         margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                         elevation: 1.5,
+                         child: ListTile(
+                           leading: CircleAvatar( 
+                              backgroundColor: Theme.of(context).colorScheme.secondaryContainer,
+                              child: Text(credits, style: TextStyle(fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.onSecondaryContainer))
+                            ),
+                           title: Text(name), 
+                           subtitle: Text('Code: $code | Credits: $credits'), 
+                           trailing: PopupMenuButton<String>(
+                             icon: const Icon(Icons.more_vert, size: 20, color: Colors.grey),
+                             onSelected: (value) {
+                               if (value == 'edit') {
+                                 _showEditSubjectDialog(subjectDoc.id, subjectData);
+                               } else if (value == 'delete') {
+                                 _deleteSubject(subjectDoc.id, code);
+                               } else if (value == 'marks') {
+                                 _navigateToMarksEntry(subjectDoc.id, code, name, subjectData);
+                               }
+                             },
+                             itemBuilder: (context) => [
+                               const PopupMenuItem(value: 'marks', child: ListTile(leading: Icon(Icons.edit_note), title: Text('Enter Marks'), dense: true, contentPadding: EdgeInsets.zero)),
+                               const PopupMenuItem(value: 'edit', child: ListTile(leading: Icon(Icons.edit), title: Text('Edit Subject'), dense: true, contentPadding: EdgeInsets.zero)),
+                               const PopupMenuItem(value: 'delete', child: ListTile(leading: Icon(Icons.delete, color: Colors.red), title: Text('Delete', style: TextStyle(color: Colors.red)), dense: true, contentPadding: EdgeInsets.zero)),
+                             ],
+                           ),
+                           onTap: () => _navigateToMarksEntry(subjectDoc.id, code, name, subjectData), 
+                         ),
                        ),
                      );
                    },

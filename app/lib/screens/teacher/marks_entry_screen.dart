@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -34,6 +35,8 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
   List<StudentMarkModel> _studentMarks = [];
   bool _isLoading = true;
   final Map<String, FocusNode> _focusNodes = {};
+  // Debounce timers for auto-save (one per student)
+  final Map<String, Timer> _debounceTimers = {};
 
   final MarkCalculationService _markCalculator = MarkCalculationService();
 
@@ -59,6 +62,7 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
 
   @override
   void dispose() {
+    _debounceTimers.forEach((_, timer) => timer.cancel());
     _focusNodes.forEach((_, node) => node.dispose());
     _studentMarks.forEach((sm) {
       sm.controllers.forEach((_, controller) => controller.dispose());
@@ -424,17 +428,23 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
             }
             _calculateClassAverages(_studentMarks);
           });
+          
+          // Auto-save with debounce (1.5 seconds after last keystroke)
+          _debounceTimers[studentMark.studentId]?.cancel();
+          _debounceTimers[studentMark.studentId] = Timer(
+            const Duration(milliseconds: 1500),
+            () => _saveMarks(studentMark),
+          );
         },
         onFieldSubmitted: (_) {
+          // Cancel pending debounce and save immediately
+          _debounceTimers[studentMark.studentId]?.cancel();
+          _saveMarks(studentMark);
           if (action == TextInputAction.done) {
-            _saveMarks(studentMark);
             currentFocusNode.unfocus();
           } else if (nextFocusNode != null) {
             FocusScope.of(context).requestFocus(nextFocusNode);
           }
-        },
-        onEditingComplete: () {
-          _saveMarks(studentMark);
         },
       ),
     );
@@ -765,15 +775,6 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
                               ),
                             ),
                           ),
-                          const DataColumn(
-                            label: Text(
-                              ' Save',
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ),
                         ],
                         rows: _studentMarks.map((studentMark) {
                           return DataRow(
@@ -814,17 +815,6 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
                                     ),
                                     textAlign: TextAlign.center,
                                   ),
-                                ),
-                              ),
-                              DataCell(
-                                IconButton(
-                                  icon: const Icon(
-                                    Icons.save_alt,
-                                    color: Colors.blueGrey,
-                                    size: 20,
-                                  ),
-                                  tooltip: 'Save ${studentMark.name}',
-                                  onPressed: () => _saveMarks(studentMark),
                                 ),
                               ),
                             ],

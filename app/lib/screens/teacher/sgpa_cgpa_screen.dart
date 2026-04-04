@@ -9,6 +9,7 @@ import 'package:printing/printing.dart';
 
 import '../../providers/app_state.dart';
 import '../../services/results_calculation_service.dart';
+import '../../services/mark_calculation_service.dart';
 
 // --- Data Models ---
 class StudentResultModel {
@@ -18,6 +19,7 @@ class StudentResultModel {
   double sgpa; 
   double cgpa; 
   int totalMarksObtained;
+  int totalCredits;
   int? rank; 
 
   StudentResultModel({
@@ -27,6 +29,7 @@ class StudentResultModel {
     required this.sgpa,
     required this.cgpa,
     required this.totalMarksObtained,
+    required this.totalCredits,
     this.rank,
   });
 
@@ -38,6 +41,7 @@ class StudentResultModel {
       sgpa: sgpa,
       cgpa: cgpa,
       totalMarksObtained: totalMarksObtained,
+      totalCredits: totalCredits,
       rank: rank ?? this.rank,
     );
   }
@@ -81,7 +85,7 @@ class _SgpaCgpaScreenState extends State<SgpaCgpaScreen> {
     setState(() => _isLoading = true);
 
     try {
-      // 1. Get Subjects to find subject count and max marks sum
+      // 1. Get Subjects to find credits and max marks per subject
       QuerySnapshot subjectSnapshot = await FirebaseFirestore.instance
           .collection('subjects')
           .where('batchYear', isEqualTo: _selectedBatchId)
@@ -95,16 +99,14 @@ class _SgpaCgpaScreenState extends State<SgpaCgpaScreen> {
         return;
       }
       
-      // Calculate the ACTUAL Maximum Possible Marks for the semester (Denominator: 800)
-      int actualMaxMarksSum = 0;
+      // Build a map of subjectId -> {credits, maxSubjectTotal} for quick lookup
+      Map<String, Map<String, dynamic>> subjectInfoMap = {};
       for (var doc in subjectSnapshot.docs) {
-          // Defaults to 100 if the field is missing (addressing your data issue)
-          actualMaxMarksSum += doc['maxSubjectTotal'] as int? ?? 100; 
-      }
-      if (actualMaxMarksSum == 0) {
-        _showError("Max marks sum is zero. Check subject configuration.");
-        setState(() => _isLoading = false);
-        return;
+        final data = doc.data() as Map<String, dynamic>;
+        subjectInfoMap[doc.id] = {
+          'credits': data['credits'] as int? ?? 0,
+          'maxSubjectTotal': data['maxSubjectTotal'] as int? ?? 100,
+        };
       }
       
       // 2. Get All Students in the batch
@@ -124,8 +126,7 @@ class _SgpaCgpaScreenState extends State<SgpaCgpaScreen> {
         final usn = studentData['usn'] ?? 'N/A';
         final name = studentData['name'] ?? 'No Name';
 
-        // 3a. Get all 'calculated_total' marks for this student/semester
-        // Note: This needs an index (which you already created or Firestore auto-created)
+        // 3a. Get all final marks for this student/semester
         QuerySnapshot finalMarksSnapshot = await FirebaseFirestore.instance
             .collection('finalExamMarks')
             .where('studentRef', isEqualTo: FirebaseFirestore.instance.doc('students/$studentId'))
@@ -133,19 +134,123 @@ class _SgpaCgpaScreenState extends State<SgpaCgpaScreen> {
             .get();
         
         int totalMarksObtained = 0;
+        int totalCredits = 0;
         
-        // Sum up all final calculated marks
+        // Build the list of subject results for VTU SGPA calculation
+        List<Map<String, dynamic>> subjectResults = [];
+        final markCalc = MarkCalculationService();
+        
         for (var markDoc in finalMarksSnapshot.docs) {
-          totalMarksObtained += (markDoc['calculated_total'] as num?)?.round() ?? 0;
+          final markData = markDoc.data() as Map<String, dynamic>;
+          
+          // Get the subject reference to find credits and maxSubjectTotal
+          final DocumentReference? subjectRef = markData['subjectRef'] as DocumentReference?;
+          String? subId;
+          if (subjectRef != null) {
+            subId = subjectRef.id;
+          }
+          
+          // Look up credits and maxSubjectTotal from our subject map
+          int credits = 0;
+          int maxSubjectTotal = 100;
+          if (subId != null && subjectInfoMap.containsKey(subId)) {
+            credits = subjectInfoMap[subId]!['credits'] as int;
+            maxSubjectTotal = subjectInfoMap[subId]!['maxSubjectTotal'] as int;
+          }
+          
+          // === ALWAYS RECALCULATE FROM SOURCE DATA ===
+          // 1. Get fresh iaFinal from marks collection (source of truth)
+          final iaMarkDocId = '${studentId}_$subId';
+          double freshIaFinal = 0.0;
+          try {
+            DocumentSnapshot iaMarkSnapshot = await FirebaseFirestore.instance
+                .collection('marks')
+                .doc(iaMarkDocId)
+                .get();
+            if (iaMarkSnapshot.exists) {
+              final iaData = iaMarkSnapshot.data() as Map<String, dynamic>;
+              freshIaFinal = (iaData['calculated_iaFinal'] as num?)?.toDouble() ?? 0.0;
+              
+              // If calculated_iaFinal not stored, recalculate from raw IA marks
+              if (freshIaFinal == 0.0) {
+                // Get subject data for calculation rules
+                final subjectDocSnapshot = await subjectRef?.get();
+                if (subjectDocSnapshot != null && subjectDocSnapshot.exists) {
+                  final fullSubjectData = subjectDocSnapshot.data() as Map<String, dynamic>;
+                  freshIaFinal = markCalc.calculateIaFinalLocal(
+                    ia1: iaData['ia_1'] as int?,
+                    ia2: iaData['ia_2'] as int?,
+                    ia3: iaData['ia_3'] as int?,
+                    projectOrAssignment: iaData['projectOrAssignment'] as int?,
+                    subjectData: fullSubjectData,
+                  );
+                }
+              }
+            }
+          } catch (e) {
+            print('[SGPA] Warning: Could not fetch IA marks for $iaMarkDocId: $e');
+          }
+          
+          // 2. Get examFinal from finalExamMarks (already have it)
+          final int examFinal = (markData['examFinal'] as num?)?.toInt() ?? 0;
+          
+          // 3. Recalculate total from fresh source data
+          double calculatedTotal = 0.0;
+          try {
+            final subjectDocSnapshot = await subjectRef?.get();
+            if (subjectDocSnapshot != null && subjectDocSnapshot.exists) {
+              final fullSubjectData = subjectDocSnapshot.data() as Map<String, dynamic>;
+              calculatedTotal = markCalc.calculateTotalMarksLocal(
+                iaFinal: freshIaFinal,
+                examFinal: examFinal,
+                subjectData: fullSubjectData,
+              );
+            }
+          } catch (e) {
+            // Fallback to stored value
+            calculatedTotal = (markData['calculated_total'] as num?)?.toDouble() ?? 0.0;
+            print('[SGPA] Warning: Could not recalculate total for $iaMarkDocId, using stored: $calculatedTotal');
+          }
+          
+          // 4. Auto-repair: update finalExamMarks if stored values differ
+          final storedIaFinal = (markData['iaFinal'] as num?)?.toDouble() ?? 0.0;
+          final storedTotal = (markData['calculated_total'] as num?)?.toDouble() ?? 0.0;
+          if ((storedIaFinal - freshIaFinal).abs() > 0.01 || (storedTotal - calculatedTotal).abs() > 0.01) {
+            markDoc.reference.update({
+              'iaFinal': freshIaFinal,
+              'calculated_total': calculatedTotal,
+            }).catchError((e) => print('[SGPA] Auto-repair failed for $iaMarkDocId: $e'));
+            print('[SGPA AUTO-REPAIR] Fixed $iaMarkDocId: iaFinal=$freshIaFinal (was $storedIaFinal), total=$calculatedTotal (was $storedTotal)');
+          }
+          
+          totalMarksObtained += calculatedTotal.round();
+          totalCredits += credits;
+          
+          // Scale marks to 100 for grade point calculation
+          double scaledMarks = calculatedTotal;
+          if (maxSubjectTotal != 100 && maxSubjectTotal > 0) {
+            scaledMarks = (calculatedTotal / maxSubjectTotal) * 100.0;
+          }
+          int gradePoint = _resultCalculator.getGradePoint(scaledMarks);
+          
+          print('[SGPA DEBUG] Student: $name | Subject: $subId | iaFinal=$freshIaFinal | exam=$examFinal | Total: $calculatedTotal/$maxSubjectTotal | Scaled: ${scaledMarks.toStringAsFixed(1)} | GP: $gradePoint | Credits: $credits | C×G: ${credits * gradePoint}');
+          
+          subjectResults.add({
+            'totalMarks': calculatedTotal,
+            'maxSubjectTotal': maxSubjectTotal,
+            'credits': credits,
+          });
         }
 
-        // 3b. Calculate SGPA (Trunction applied in service)
+        // 3b. Calculate SGPA using VTU Credit-Based Formula
+        // SGPA = Σ(Ci × Gi) / Σ(Ci)
         double sgpa = _resultCalculator.calculateSgpa(
-          totalMarksObtained: totalMarksObtained, 
-          actualMaxMarksSum: actualMaxMarksSum, // Dynamic max sum
+          subjectResults: subjectResults,
         );
         
-        // 3c. Fetch previous SGPAs for CGPA (Needs index: studentId == AND semester <)
+        print('[SGPA DEBUG] Student: $name | Total Credits: $totalCredits | SGPA: $sgpa');
+        
+        // 3c. Fetch previous SGPAs for CGPA
         List<double> prevSgpas = [];
         if (_selectedSemester > 1) { 
            QuerySnapshot prevResults = await FirebaseFirestore.instance
@@ -159,7 +264,7 @@ class _SgpaCgpaScreenState extends State<SgpaCgpaScreen> {
            }
         }
         
-        // 3d. Calculate CGPA (Trunction applied in service)
+        // 3d. Calculate CGPA (average of all semester SGPAs)
         double cgpa = _resultCalculator.calculateCgpa(
           currentSgpa: sgpa, 
           previousSgpas: prevSgpas,
@@ -173,6 +278,7 @@ class _SgpaCgpaScreenState extends State<SgpaCgpaScreen> {
           sgpa: sgpa,
           cgpa: cgpa,
           totalMarksObtained: totalMarksObtained,
+          totalCredits: totalCredits,
         ));
 
         totalSgpaSum += sgpa;
@@ -188,6 +294,7 @@ class _SgpaCgpaScreenState extends State<SgpaCgpaScreen> {
           'sgpa': sgpa,
           'cgpa': cgpa,
           'totalMarksObtained': totalMarksObtained,
+          'totalCredits': totalCredits,
           'rank': 0, 
           'lastCalculated': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
@@ -195,8 +302,8 @@ class _SgpaCgpaScreenState extends State<SgpaCgpaScreen> {
       } // End student loop
 
       // 4. Calculate Class Averages and Assign Ranks
-      _classAverageSgpa = totalSgpaSum / calculatedResults.length;
-      _classAverageCgpa = totalCgpaSum / calculatedResults.length;
+      _classAverageSgpa = calculatedResults.isNotEmpty ? totalSgpaSum / calculatedResults.length : 0.0;
+      _classAverageCgpa = calculatedResults.isNotEmpty ? totalCgpaSum / calculatedResults.length : 0.0;
       
       _assignRanks(calculatedResults); // Assigns rank property
       
@@ -383,6 +490,9 @@ class _SgpaCgpaScreenState extends State<SgpaCgpaScreen> {
                  crossAxisAlignment: CrossAxisAlignment.start,
                  children: [
                    Text('Result Summary (Total Students: $studentCount)', style: Theme.of(context).textTheme.titleMedium),
+                   const SizedBox(height: 4),
+                   Text('Formula: SGPA = Σ(Credits × Grade Point) / Σ(Credits)', 
+                     style: TextStyle(fontSize: 12, color: Colors.grey[600], fontStyle: FontStyle.italic)),
                    const SizedBox(height: 10),
                    Row(
                      children: [
@@ -477,7 +587,7 @@ class _SgpaCgpaScreenState extends State<SgpaCgpaScreen> {
      final pdf = pw.Document();
      final semester = _selectedSemester;
      
-     final List<String> headers = ['Rank', 'Name', 'USN', 'SGPA', 'CGPA', 'Total Marks'];
+     final List<String> headers = ['Rank', 'Name', 'USN', 'SGPA', 'CGPA', 'Total Marks', 'Credits'];
      final List<List<String>> data = _results.map((result) {
        return [
          result.rank?.toString() ?? '-',
@@ -486,6 +596,7 @@ class _SgpaCgpaScreenState extends State<SgpaCgpaScreen> {
          result.sgpa.toStringAsFixed(2),
          result.cgpa.toStringAsFixed(2),
          result.totalMarksObtained.toString(),
+         result.totalCredits.toString(),
        ];
      }).toList();
 
@@ -500,6 +611,7 @@ class _SgpaCgpaScreenState extends State<SgpaCgpaScreen> {
               child: pw.Text('Academic Results Report', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 20)),
             ),
             pw.Text('Batch: $batchName | Semester: $semester', style: const pw.TextStyle(fontSize: 14)),
+            pw.Text('SGPA Formula: VTU Credit-Based — Σ(Credits × Grade Point) / Σ(Credits)', style: const pw.TextStyle(fontSize: 10)),
             pw.Divider(),
             
             // Analytics Summary
@@ -523,6 +635,7 @@ class _SgpaCgpaScreenState extends State<SgpaCgpaScreen> {
                   3: pw.Alignment.center, // SGPA
                   4: pw.Alignment.center, // CGPA
                   5: pw.Alignment.center, // Total Marks
+                  6: pw.Alignment.center, // Credits
               },
             ),
           ],
