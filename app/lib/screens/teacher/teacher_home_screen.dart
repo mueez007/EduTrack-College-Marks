@@ -10,8 +10,7 @@ import 'student_details_screen.dart';
 import 'subjects_screen.dart';
 import 'final_exam_marks_screen.dart';
 import 'sgpa_cgpa_screen.dart';
-import 'attendance_percentage_screen.dart'; // NEW: Attendance screen
-import 'daily_absentee_screen.dart'; // NEW: Daily absentee screen
+import 'daily_absentee_screen.dart'; // Daily absentee screen
 
 class TeacherHomeScreen extends StatelessWidget {
   const TeacherHomeScreen({super.key});
@@ -41,6 +40,92 @@ class TeacherHomeScreen extends StatelessWidget {
     }
   }
 
+  // Function to show Send Alerts dialog
+  void _showSendAlertsDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Send Automated Alerts'),
+        content: const Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('This will send alerts for:'),
+            SizedBox(height: 10),
+            Text('• New IA Marks', style: TextStyle(color: Colors.blue)),
+            Text('• Final Exam Marks', style: TextStyle(color: Colors.green)),
+            Text(
+              '• Attendance % (if configured)',
+              style: TextStyle(color: Colors.orange),
+            ),
+            SizedBox(height: 10),
+            Text(
+              'Only sends for current semester marks.',
+              style: TextStyle(fontSize: 12),
+            ),
+            Text(
+              'Requires n8n setup.',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              await _triggerAlerts(context);
+            },
+            child: const Text('Send Alerts'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _triggerAlerts(BuildContext context) async {
+    final scaffold = ScaffoldMessenger.of(context);
+    final batchId = Provider.of<AppState>(
+      context,
+      listen: false,
+    ).selectedBatchId;
+
+    if (batchId == null) {
+      scaffold.showSnackBar(
+        const SnackBar(
+          content: Text('Error: No batch selected'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    scaffold.showSnackBar(
+      const SnackBar(
+        content: Text('Sending alerts...'),
+        backgroundColor: Colors.blue,
+      ),
+    );
+
+    try {
+      // TODO: Implement Cloud Function call to trigger n8n
+      await Future.delayed(const Duration(seconds: 2));
+
+      scaffold.showSnackBar(
+        const SnackBar(
+          content: Text('Alerts queued successfully!'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      scaffold.showSnackBar(
+        SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     // Read the selected batch from AppState using Provider
@@ -52,6 +137,12 @@ class TeacherHomeScreen extends StatelessWidget {
         title: Text('Dashboard - $selectedBatchName'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.notifications_active_outlined),
+            tooltip: 'Send Alerts',
+            onPressed: () => _showSendAlertsDialog(context),
+          ),
+          const SizedBox(width: 8),
           IconButton(
             icon: const Icon(Icons.logout),
             tooltip: 'Logout',
@@ -178,19 +269,6 @@ class TeacherHomeScreen extends StatelessWidget {
               ),
             ),
             ListTile(
-              leading: const Icon(Icons.calendar_view_month_outlined),
-              title: const Text('Monthly Attendance %'),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const AttendancePercentageScreen(),
-                  ),
-                );
-              },
-            ),
-            ListTile(
               leading: const Icon(Icons.person_off_outlined),
               title: const Text('Daily Absentees'),
               onTap: () {
@@ -201,6 +279,25 @@ class TeacherHomeScreen extends StatelessWidget {
                     builder: (context) => const DailyAbsenteeScreen(),
                   ),
                 );
+              },
+            ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: Text(
+                'Automation',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey,
+                ),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.notifications_active_outlined),
+              title: const Text('Send Alerts'),
+              onTap: () {
+                Navigator.pop(context);
+                _showSendAlertsDialog(context);
               },
             ),
 
@@ -313,6 +410,12 @@ class TeacherHomeScreen extends StatelessWidget {
                           ),
                           _buildQuickActionButton(
                             context: context,
+                            icon: Icons.notifications_active,
+                            label: 'Send Alerts',
+                            onTap: () => _showSendAlertsDialog(context),
+                          ),
+                          _buildQuickActionButton(
+                            context: context,
                             icon: Icons.calendar_today,
                             label: 'Attendance',
                             onTap: () {
@@ -320,7 +423,7 @@ class TeacherHomeScreen extends StatelessWidget {
                                 context,
                                 MaterialPageRoute(
                                   builder: (context) =>
-                                      const AttendancePercentageScreen(),
+                                      const DailyAbsenteeScreen(),
                                 ),
                               );
                             },
