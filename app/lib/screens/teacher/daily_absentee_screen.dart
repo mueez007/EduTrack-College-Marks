@@ -32,6 +32,7 @@ class _DailyAbsenteeScreenState extends State<DailyAbsenteeScreen> {
   bool _isLoading = true;
   bool _isSaving = false;
   bool _isExporting = false;
+  bool _isExportingDatewise = false;
 
   @override
   void initState() {
@@ -440,6 +441,273 @@ class _DailyAbsenteeScreenState extends State<DailyAbsenteeScreen> {
     }
   }
 
+  /// --------------- MONTHLY DATE-WISE REPORT ---------------
+
+  Future<void> _exportMonthlyDatewiseReport() async {
+    if (_selectedSubjectId == null || _students.isEmpty) {
+      _showError('No data available to export');
+      return;
+    }
+    setState(() => _isExportingDatewise = true);
+
+    try {
+      final batchName =
+          Provider.of<AppState>(context, listen: false).selectedBatchName ?? '';
+      final subject = _subjects.firstWhere((s) => s.id == _selectedSubjectId);
+      final int month = _selectedDate.month;
+      final int year = _selectedDate.year;
+      final monthLabel = DateFormat('MMMM yyyy').format(_selectedDate);
+
+      // 1. Load all absentee docs for the month
+      final absenteeDocs =
+          await _loadMonthlyAbsenteeDocs(month: month, year: year);
+
+      // 2. Build a map:  date-string -> { classCount, absentCounts }
+      final Map<String, _DayRecord> dayRecords = {};
+      for (final doc in absenteeDocs) {
+        final data = doc.data() as Map<String, dynamic>;
+        final String dateStr = data['date'] ?? '';
+        if (dateStr.isEmpty) continue;
+        final int classCount =
+            (data['classCount'] is int) ? data['classCount'] as int : 1;
+        final int normalizedCC = classCount < 1 ? 1 : classCount;
+        final Map<String, int> dayAbsentCounts =
+            _parseAbsentClassCountsFromDoc(data,
+                defaultClassCount: normalizedCC);
+        dayRecords[dateStr] = _DayRecord(
+          classCount: normalizedCC,
+          absentCounts: dayAbsentCounts,
+        );
+      }
+
+      // 3. Build sorted list of dates in the month that had classes
+      final List<String> sortedDates = dayRecords.keys.toList()
+        ..sort();
+
+      if (sortedDates.isEmpty) {
+        _showError('No attendance data found for $monthLabel');
+        setState(() => _isExportingDatewise = false);
+        return;
+      }
+
+      // 4. Expand each date into individual class-slot columns.
+      //    If April 14 had 2 classes → two columns "14/4 C1", "14/4 C2".
+      //    If a date had 1 class → single column "14/4".
+      final List<_ClassSlot> classSlots = [];
+      for (final dateStr in sortedDates) {
+        final dayRec = dayRecords[dateStr]!;
+        final parts = dateStr.split('-'); // yyyy-MM-dd
+        final String shortDate = (parts.length == 3)
+            ? '${int.parse(parts[2])}/${int.parse(parts[1])}'
+            : dateStr;
+        if (dayRec.classCount == 1) {
+          classSlots.add(_ClassSlot(
+            dateStr: dateStr,
+            classIndex: 0,
+            label: shortDate,
+          ));
+        } else {
+          for (int c = 0; c < dayRec.classCount; c++) {
+            classSlots.add(_ClassSlot(
+              dateStr: dateStr,
+              classIndex: c,
+              label: '$shortDate C${c + 1}',
+            ));
+          }
+        }
+      }
+
+      // 5. Build the data grid
+      //    Each row: [Sl, USN, Name, slot1, slot2, ..., TotalClasses, Attended, %]
+      final List<List<String>> dataRows = [];
+      int grandTotalClasses = 0;
+      for (final dr in dayRecords.values) {
+        grandTotalClasses += dr.classCount;
+      }
+
+      for (int i = 0; i < _students.length; i++) {
+        final student = _students[i];
+        final List<String> row = [
+          '${i + 1}',
+          student.usn,
+          student.name,
+        ];
+        int totalAbsent = 0;
+        for (final slot in classSlots) {
+          final dayRec = dayRecords[slot.dateStr]!;
+          final int absentCount = dayRec.absentCounts[student.id] ?? 0;
+          final int presentCount = dayRec.classCount - absentCount;
+          // Distribute: first presentCount slots are P, rest are A.
+          // e.g., 2 classes, 1 absent → slot 0 (C1) = P, slot 1 (C2) = A
+          if (slot.classIndex < presentCount) {
+            row.add('P');
+          } else {
+            row.add('A');
+            totalAbsent += 1;
+          }
+        }
+        final int attended = grandTotalClasses - totalAbsent;
+        final double pct = grandTotalClasses == 0
+            ? 100
+            : (attended / grandTotalClasses) * 100;
+        row.addAll([
+          grandTotalClasses.toString(),
+          attended.toString(),
+          '${pct.toStringAsFixed(1)}%',
+        ]);
+        dataRows.add(row);
+      }
+
+      final List<String> slotLabels =
+          classSlots.map((s) => s.label).toList();
+
+      final List<String> headers = [
+        'Sl',
+        'USN',
+        'Student Name',
+        ...slotLabels,
+        'Total',
+        'Attended',
+        '%',
+      ];
+
+      // 6. Determine page format based on column count
+      //    Use landscape; pick A3 or larger to fit all class slots.
+      final int columnCount = headers.length;
+      PdfPageFormat pageFormat;
+      if (columnCount <= 20) {
+        pageFormat = PdfPageFormat.a4.landscape;
+      } else if (columnCount <= 30) {
+        pageFormat = PdfPageFormat.a3.landscape;
+      } else {
+        // For very wide tables, use a custom wide format
+        final double w = 297 + (columnCount - 30) * 10.0;
+        pageFormat = PdfPageFormat(
+          w * PdfPageFormat.mm,
+          297 * PdfPageFormat.mm,
+          marginAll: 10 * PdfPageFormat.mm,
+        );
+      }
+
+      // 7. Compute column widths
+      //    Fixed widths for Sl, USN, Name, Total, Attended, %; narrow for class slots
+      final Map<int, pw.TableColumnWidth> columnWidths = {};
+      columnWidths[0] = const pw.FixedColumnWidth(24);  // Sl
+      columnWidths[1] = const pw.FixedColumnWidth(80);  // USN
+      columnWidths[2] = const pw.FixedColumnWidth(100); // Name
+      for (int c = 3; c < 3 + classSlots.length; c++) {
+        // Wider columns for multi-class labels like "14/4 C1"
+        columnWidths[c] = const pw.FixedColumnWidth(32);
+      }
+      final int totalColIdx = 3 + classSlots.length;
+      columnWidths[totalColIdx] = const pw.FixedColumnWidth(32);     // Total
+      columnWidths[totalColIdx + 1] = const pw.FixedColumnWidth(38); // Attended
+      columnWidths[totalColIdx + 2] = const pw.FixedColumnWidth(36); // %
+
+      // 8. Build PDF
+      final pdf = pw.Document();
+      pdf.addPage(
+        pw.MultiPage(
+          pageFormat: pageFormat,
+          margin: const pw.EdgeInsets.all(16),
+          header: (_) => pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Text(
+                'Monthly Datewise Attendance',
+                style:
+                    pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold),
+              ),
+              pw.SizedBox(height: 2),
+              pw.Text(
+                '${subject.code} - ${subject.name}  |  Batch: $batchName  |  '
+                'Sem: $_selectedSemester  |  Month: $monthLabel',
+                style: const pw.TextStyle(fontSize: 9),
+              ),
+              pw.Text(
+                'P = Present  |  A = Absent  |  '
+                'Dates with multiple classes show C1, C2, etc.',
+                style: const pw.TextStyle(fontSize: 8),
+              ),
+              pw.SizedBox(height: 6),
+            ],
+          ),
+          footer: (ctx) => pw.Align(
+            alignment: pw.Alignment.centerRight,
+            child: pw.Text(
+              'Page ${ctx.pageNumber} of ${ctx.pagesCount}',
+              style: const pw.TextStyle(fontSize: 8),
+            ),
+          ),
+          build: (_) => [
+            pw.TableHelper.fromTextArray(
+              headers: headers,
+              data: dataRows,
+              columnWidths: columnWidths,
+              cellStyle: const pw.TextStyle(fontSize: 7),
+              headerStyle: pw.TextStyle(
+                fontSize: 7,
+                fontWeight: pw.FontWeight.bold,
+              ),
+              cellAlignment: pw.Alignment.center,
+              headerDecoration: const pw.BoxDecoration(
+                color: PdfColors.grey300,
+              ),
+              headerAlignments: {
+                0: pw.Alignment.center,
+                1: pw.Alignment.centerLeft,
+                2: pw.Alignment.centerLeft,
+              },
+              cellAlignments: {
+                0: pw.Alignment.center,
+                1: pw.Alignment.centerLeft,
+                2: pw.Alignment.centerLeft,
+              },
+            ),
+          ],
+        ),
+      );
+
+      // 9. Show print / share dialog
+      await Printing.layoutPdf(
+        onLayout: (PdfPageFormat format) async => pdf.save(),
+      );
+
+      // 10. Also share as CSV
+      final csvBuf = StringBuffer();
+      csvBuf.writeln(headers.map(_csvField).join(','));
+      for (final row in dataRows) {
+        csvBuf.writeln(row.map(_csvField).join(','));
+      }
+
+      final tempDir = await getTemporaryDirectory();
+      final ts = DateFormat('yyyyMMdd_HHmmss').format(DateTime.now());
+      final csvFile = File(
+        '${tempDir.path}/datewise_${subject.code}_$ts.csv',
+      );
+      await csvFile.writeAsString(csvBuf.toString());
+      await Share.shareXFiles(
+        [XFile(csvFile.path)],
+        text:
+            'Monthly datewise attendance (${subject.code}) $monthLabel. Open in Excel.',
+      );
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Datewise report: PDF dialog + CSV share'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      _showError('Failed to export datewise report: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _isExportingDatewise = false);
+      }
+    }
+  }
+
   String _buildCsv(List<AttendanceReportRow> rows) {
     final StringBuffer buffer = StringBuffer();
     buffer.writeln('USN,Student Name,Attended Classes,Total Classes,Attendance %');
@@ -693,25 +961,62 @@ class _DailyAbsenteeScreenState extends State<DailyAbsenteeScreen> {
                     ),
                   ),
                   const SizedBox(height: 10),
-                  ElevatedButton.icon(
-                    icon: _isExporting
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          )
-                        : const Icon(Icons.download, size: 18),
-                    label: Text(
-                      _isExporting ? 'Exporting...' : 'Download Report',
-                    ),
-                    onPressed:
-                        _isExporting || _isLoading ? null : _exportAttendanceReport,
-                    style: ElevatedButton.styleFrom(
-                      minimumSize: const Size(double.infinity, 40),
-                    ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          icon: _isExporting
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : const Icon(Icons.download, size: 18),
+                          label: Text(
+                            _isExporting ? 'Exporting...' : 'Overall Report',
+                          ),
+                          onPressed: _isExporting || _isLoading
+                              ? null
+                              : _exportAttendanceReport,
+                          style: ElevatedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          icon: _isExportingDatewise
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : const Icon(Icons.calendar_month, size: 18),
+                          label: Text(
+                            _isExportingDatewise
+                                ? 'Exporting...'
+                                : 'Monthly Datewise',
+                          ),
+                          onPressed: _isExportingDatewise || _isLoading
+                              ? null
+                              : _exportMonthlyDatewiseReport,
+                          style: ElevatedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            backgroundColor:
+                                Theme.of(context).colorScheme.secondary,
+                            foregroundColor:
+                                Theme.of(context).colorScheme.onSecondary,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                   if (_getAbsentStudentCount() > 0)
                     Padding(
@@ -849,5 +1154,26 @@ class AttendanceReportRow {
     required this.attendedClasses,
     required this.totalClasses,
     required this.percentage,
+  });
+}
+
+/// Helper class to hold per-day attendance data for datewise report.
+class _DayRecord {
+  final int classCount;
+  final Map<String, int> absentCounts;
+
+  _DayRecord({required this.classCount, required this.absentCounts});
+}
+
+/// Helper class representing a single class slot (one column in datewise report).
+class _ClassSlot {
+  final String dateStr;
+  final int classIndex; // 0-based index within the day
+  final String label;   // e.g. "14/4" or "14/4 C1"
+
+  _ClassSlot({
+    required this.dateStr,
+    required this.classIndex,
+    required this.label,
   });
 }
