@@ -11,6 +11,7 @@ import 'package:printing/printing.dart';
 import '../../providers/app_state.dart';
 import '../../models/student_mark_model.dart';
 import '../../services/mark_calculation_service.dart';
+import 'ia_question_config_screen.dart';
 
 class MarksEntryScreen extends StatefulWidget {
   final String subjectId;
@@ -40,6 +41,12 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
 
   final MarkCalculationService _markCalculator = MarkCalculationService();
 
+  /// Whether this is a 30-mark objective subject (direct IA entry, no question-wise).
+  bool get _isObjectiveSubject => (widget.subjectData['baseInternalMax'] ?? 40) == 30;
+
+  /// Track which IAs have question-wise data entered (for button indicators)
+  final Map<String, bool> _iaHasData = {'ia_1': false, 'ia_2': false, 'ia_3': false};
+
   // --- New State Variables for Averages ---
   Map<String, double> _classAverages = {
     'ia_1': 0.0,
@@ -58,6 +65,63 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
       listen: false,
     ).selectedBatchId;
     _loadStudentMarks();
+    if (!_isObjectiveSubject) {
+      _checkIaDataExists();
+    }
+  }
+
+  /// Check if question-wise data exists for each IA (for button indicators).
+  Future<void> _checkIaDataExists() async {
+    if (_selectedBatchId == null) return;
+    try {
+      // Just check if any ia_details doc exists for this subject
+      QuerySnapshot studentSnapshot = await FirebaseFirestore.instance
+          .collection('students')
+          .where('batchYear', isEqualTo: _selectedBatchId)
+          .limit(1)
+          .get();
+      if (studentSnapshot.docs.isEmpty) return;
+
+      final firstStudentId = studentSnapshot.docs.first.id;
+      final detailDocId = '${firstStudentId}_${widget.subjectId}';
+      DocumentSnapshot detailSnap = await FirebaseFirestore.instance
+          .collection('ia_details')
+          .doc(detailDocId)
+          .get();
+
+      if (detailSnap.exists && mounted) {
+        final data = detailSnap.data() as Map<String, dynamic>? ?? {};
+        setState(() {
+          _iaHasData['ia_1'] = data.containsKey('ia_1');
+          _iaHasData['ia_2'] = data.containsKey('ia_2');
+          _iaHasData['ia_3'] = data.containsKey('ia_3');
+        });
+      }
+    } catch (e) {
+      print('Error checking IA data: $e');
+    }
+  }
+
+  /// Navigate to the IA question config screen for a specific IA.
+  void _navigateToIAConfig(String iaLabel, String iaFieldKey) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => IAQuestionConfigScreen(
+          iaLabel: iaLabel,
+          iaFieldKey: iaFieldKey,
+          subjectId: widget.subjectId,
+          subjectCode: widget.subjectCode,
+          subjectName: widget.subjectName,
+          subjectData: widget.subjectData,
+          batchId: _selectedBatchId!,
+        ),
+      ),
+    ).then((_) {
+      // Reload marks after returning from question-wise entry
+      _loadStudentMarks();
+      _checkIaDataExists();
+    });
   }
 
   @override
@@ -450,6 +514,74 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
     );
   }
 
+  /// Read-only display for IA1/IA2/IA3 when using question-wise entry.
+  Widget _buildReadOnlyIaCell(StudentMarkModel studentMark, String fieldKey) {
+    final value = studentMark.controllers[fieldKey]?.text ?? '';
+    return SizedBox(
+      width: 70,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+        decoration: BoxDecoration(
+          color: value.isNotEmpty ? Colors.green.withValues(alpha: 0.08) : Colors.grey.withValues(alpha: 0.05),
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(
+            color: value.isNotEmpty ? Colors.green.shade300 : Colors.grey.shade300,
+          ),
+        ),
+        child: Text(
+          value.isNotEmpty ? value : '-',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: value.isNotEmpty ? FontWeight.bold : FontWeight.normal,
+            color: value.isNotEmpty ? Colors.green.shade700 : Colors.grey,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Build the IA1/IA2/IA3 button bar for question-wise entry.
+  Widget _buildIaButtonBar() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
+      child: Row(
+        children: [
+          const Text(
+            'Enter Detailed Marks: ',
+            style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13),
+          ),
+          const SizedBox(width: 8),
+          _buildIaButton('IA1', 'ia_1'),
+          const SizedBox(width: 8),
+          _buildIaButton('IA2', 'ia_2'),
+          const SizedBox(width: 8),
+          _buildIaButton('IA3', 'ia_3'),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildIaButton(String label, String fieldKey) {
+    final hasData = _iaHasData[fieldKey] ?? false;
+    return FilledButton.icon(
+      onPressed: () => _navigateToIAConfig(label, fieldKey),
+      icon: Icon(
+        hasData ? Icons.check_circle : Icons.edit_note,
+        size: 18,
+      ),
+      label: Text(label),
+      style: FilledButton.styleFrom(
+        backgroundColor: hasData
+            ? Colors.green.shade600
+            : Theme.of(context).colorScheme.primary,
+        foregroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+      ),
+    );
+  }
+
   // --- Export All Student Marks to PDF ---
   Future<void> _exportPdf() async {
     if (!mounted) return;
@@ -675,6 +807,9 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      // --- IA BUTTON BAR (for non-objective subjects) ---
+                      if (!_isObjectiveSubject) _buildIaButtonBar(),
+
                       // --- STATS ROW (The New Feature) ---
                       Padding(
                         padding: const EdgeInsets.symmetric(
@@ -788,14 +923,21 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
                                   ),
                                 ),
                               ),
+                              // IA1/IA2/IA3: read-only for question-wise, editable for objective
                               DataCell(
-                                _buildMarkInput(studentMark, 'ia_1', maxIA),
+                                _isObjectiveSubject
+                                    ? _buildMarkInput(studentMark, 'ia_1', maxIA)
+                                    : _buildReadOnlyIaCell(studentMark, 'ia_1'),
                               ),
                               DataCell(
-                                _buildMarkInput(studentMark, 'ia_2', maxIA),
+                                _isObjectiveSubject
+                                    ? _buildMarkInput(studentMark, 'ia_2', maxIA)
+                                    : _buildReadOnlyIaCell(studentMark, 'ia_2'),
                               ),
                               DataCell(
-                                _buildMarkInput(studentMark, 'ia_3', maxIA),
+                                _isObjectiveSubject
+                                    ? _buildMarkInput(studentMark, 'ia_3', maxIA)
+                                    : _buildReadOnlyIaCell(studentMark, 'ia_3'),
                               ),
                               DataCell(
                                 _buildMarkInput(

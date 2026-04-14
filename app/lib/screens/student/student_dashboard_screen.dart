@@ -3,7 +3,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../login_screen.dart';
-import 'student_subject_view_screen.dart'; // Import the detail view
+import 'student_subject_view_screen.dart';
+import 'student_attendance_screen.dart';
 
 class StudentDashboardScreen extends StatefulWidget {
   final String? usn; // Add this parameter
@@ -348,7 +349,69 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
             },
           ),
 
-          const SizedBox(height: 16),
+          const SizedBox(height: 8),
+
+          // --- Attendance Button ---
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0),
+            child: Card(
+              elevation: 2,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => StudentAttendanceScreen(
+                        studentId: studentDocId,
+                        batchId: _selectedBatchId,
+                        semester: _selectedSemester,
+                      ),
+                    ),
+                  );
+                },
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.blue.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(Icons.calendar_month, color: Colors.blue, size: 24),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'View Attendance',
+                              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            Text(
+                              'Subject-wise attendance summary',
+                              style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 12),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16.0),
             child: Text('Subjects for Semester $_selectedSemester',
