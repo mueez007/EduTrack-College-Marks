@@ -107,7 +107,7 @@ class _IAQuestionwiseEntryScreenState extends State<IAQuestionwiseEntryScreen> {
     for (int q = 1; q <= _numQuestions; q++) {
       if (_numSubQuestions > 0) {
         for (int s = 0; s < _numSubQuestions; s++) {
-          _columnKeys.add('q${q}${String.fromCharCode(97 + s)}');
+          _columnKeys.add('q$q${String.fromCharCode(97 + s)}');
         }
       } else {
         _columnKeys.add('q$q');

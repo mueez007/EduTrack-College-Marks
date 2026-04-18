@@ -128,9 +128,9 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
   void dispose() {
     _debounceTimers.forEach((_, timer) => timer.cancel());
     _focusNodes.forEach((_, node) => node.dispose());
-    _studentMarks.forEach((sm) {
+    for (var sm in _studentMarks) {
       sm.controllers.forEach((_, controller) => controller.dispose());
-    });
+    }
     super.dispose();
   }
 
@@ -152,10 +152,12 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
         if (mark.ia1 != null) sumIa1 += mark.ia1!;
         if (mark.ia2 != null) sumIa2 += mark.ia2!;
         if (mark.ia3 != null) sumIa3 += mark.ia3!;
-        if (mark.projectOrAssignment != null)
+        if (mark.projectOrAssignment != null) {
           sumProjAssign += mark.projectOrAssignment!;
-        if (mark.calculatedIaFinal != null)
+        }
+        if (mark.calculatedIaFinal != null) {
           sumIaFinal += mark.calculatedIaFinal!;
+        }
       }
     }
 
@@ -229,11 +231,11 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
         };
 
         // Create FocusNodes for input fields if they don't exist
-        if (!_focusNodes.containsKey(studentId + '_ia_1')) {
-          _focusNodes[studentId + '_ia_1'] = FocusNode();
-          _focusNodes[studentId + '_ia_2'] = FocusNode();
-          _focusNodes[studentId + '_ia_3'] = FocusNode();
-          _focusNodes[studentId + '_projectOrAssignment'] = FocusNode();
+        if (!_focusNodes.containsKey('${studentId}_ia_1')) {
+          _focusNodes['${studentId}_ia_1'] = FocusNode();
+          _focusNodes['${studentId}_ia_2'] = FocusNode();
+          _focusNodes['${studentId}_ia_3'] = FocusNode();
+          _focusNodes['${studentId}_projectOrAssignment'] = FocusNode();
         }
 
         // Calculate initial IA Final
@@ -404,25 +406,25 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
     String label;
     TextInputAction action;
     FocusNode currentFocusNode =
-        _focusNodes[studentMark.studentId + '_' + fieldKey]!;
+        _focusNodes['${studentMark.studentId}_$fieldKey']!;
     FocusNode? nextFocusNode;
 
     switch (fieldKey) {
       case 'ia_1':
         label = 'IA 1';
         action = TextInputAction.next;
-        nextFocusNode = _focusNodes[studentMark.studentId + '_ia_2'];
+        nextFocusNode = _focusNodes['${studentMark.studentId}_ia_2'];
         break;
       case 'ia_2':
         label = 'IA 2';
         action = TextInputAction.next;
-        nextFocusNode = _focusNodes[studentMark.studentId + '_ia_3'];
+        nextFocusNode = _focusNodes['${studentMark.studentId}_ia_3'];
         break;
       case 'ia_3':
         label = 'IA 3';
         action = TextInputAction.next;
         nextFocusNode =
-            _focusNodes[studentMark.studentId + '_projectOrAssignment'];
+            _focusNodes['${studentMark.studentId}_projectOrAssignment'];
         break;
       case 'projectOrAssignment':
         label = widget.subjectData['iaCalculationRule'] == 'SEM_5_6_SCHEMA'

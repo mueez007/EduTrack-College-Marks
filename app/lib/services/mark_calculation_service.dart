@@ -1,4 +1,3 @@
-import 'dart:math'; 
 
 class MarkCalculationService {
 
@@ -42,13 +41,13 @@ class MarkCalculationService {
       case "BEST_2_OF_3_AVG": // IAs (25) -> 15 + Assign (10) + Lab (25) = 50
         final internals = [ia1 ?? 0, ia2 ?? 0, ia3 ?? 0];
         internals.sort((a, b) => b - a); 
-        final double best_2_avg = (internals[0] + internals[1]) / 2.0;
+        final double best2Avg = (internals[0] + internals[1]) / 2.0;
 
         final int baseMax = subjectData['baseInternalMax'] ?? 25;
         final int targetMax = subjectData['maxInternalTotal'] ?? 15; 
         final int assignMax = subjectData['maxAssignment'] ?? 10;
         
-        reducedInternalValue = (best_2_avg / baseMax) * targetMax;
+        reducedInternalValue = (best2Avg / baseMax) * targetMax;
         final int assignMarks = (projAssignMarks).clamp(0, assignMax);
         final int labMarks = 0; 
 

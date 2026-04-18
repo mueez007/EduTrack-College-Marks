@@ -819,7 +819,7 @@ class _DailyAbsenteeScreenState extends State<DailyAbsenteeScreen> {
                     children: [
                       Expanded(
                         child: DropdownButtonFormField<int>(
-                          value: _selectedSemester,
+                          initialValue: _selectedSemester,
                           decoration: const InputDecoration(
                             labelText: 'Semester',
                             border: OutlineInputBorder(),
@@ -843,7 +843,7 @@ class _DailyAbsenteeScreenState extends State<DailyAbsenteeScreen> {
                       const SizedBox(width: 10),
                       Expanded(
                         child: DropdownButtonFormField<String?>(
-                          value: _selectedSubjectId,
+                          initialValue: _selectedSubjectId,
                           decoration: const InputDecoration(
                             labelText: 'Subject',
                             border: OutlineInputBorder(),

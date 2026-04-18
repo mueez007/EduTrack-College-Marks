@@ -67,15 +67,13 @@ class _StudentSubjectViewScreenState extends State<StudentSubjectViewScreen> {
         calculatedIaFinal = (iaData['calculated_iaFinal'] as num?)?.toDouble();
         
         // If calculated_iaFinal not stored, recalculate locally
-        if (calculatedIaFinal == null) {
-          calculatedIaFinal = _markCalculator.calculateIaFinalLocal(
+        calculatedIaFinal ??= _markCalculator.calculateIaFinalLocal(
             ia1: iaData['ia_1'] as int?,
             ia2: iaData['ia_2'] as int?,
             ia3: iaData['ia_3'] as int?,
             projectOrAssignment: iaData['projectOrAssignment'] as int?,
             subjectData: widget.subjectData,
           );
-        }
       }
       
       _iaFinal = calculatedIaFinal ?? 0.0;

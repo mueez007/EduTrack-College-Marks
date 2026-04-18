@@ -320,7 +320,7 @@ class _SgpaCgpaScreenState extends State<SgpaCgpaScreen> {
       }
       
       // Save the single public document containing all rank data
-      await FirebaseFirestore.instance.collection('publicRanks').doc('S$_selectedSemester-${_selectedBatchId}').set({
+      await FirebaseFirestore.instance.collection('publicRanks').doc('S$_selectedSemester-$_selectedBatchId').set({
           'rankList': rankMap,
           'lastUpdated': FieldValue.serverTimestamp(),
           'classAverageSGPA': _classAverageSgpa,

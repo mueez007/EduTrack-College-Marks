@@ -84,11 +84,11 @@ class _FinalExamMarksScreenState extends State<FinalExamMarksScreen> {
   void dispose() {
     _debounceTimers.forEach((_, timer) => timer.cancel());
     _focusNodes.forEach((_, node) => node.dispose());
-    _studentFinalMarks.forEach((studentModel) {
+    for (var studentModel in _studentFinalMarks) {
       studentModel.subjectMarks.forEach((_, subjectData) {
         subjectData.controller.dispose();
       });
-    });
+    }
     super.dispose();
   }
 
@@ -153,7 +153,7 @@ class _FinalExamMarksScreenState extends State<FinalExamMarksScreen> {
               subjectDoc.data() as Map<String, dynamic>? ?? {};
 
           // a) Get IA Final from 'marks' collection
-          final iaMarkDocId = '${studentId}_${subjectId}';
+          final iaMarkDocId = '${studentId}_$subjectId';
           DocumentSnapshot iaMarkSnapshot = await FirebaseFirestore.instance
               .collection('marks')
               .doc(iaMarkDocId)
@@ -167,7 +167,7 @@ class _FinalExamMarksScreenState extends State<FinalExamMarksScreen> {
                   ?.toDouble();
 
           // b) Get Exam Final from 'finalExamMarks' collection
-          final finalMarkDocId = '${studentId}_${subjectId}';
+          final finalMarkDocId = '${studentId}_$subjectId';
           DocumentSnapshot finalMarkSnapshot = await FirebaseFirestore.instance
               .collection('finalExamMarks')
               .doc(finalMarkDocId)
@@ -210,7 +210,7 @@ class _FinalExamMarksScreenState extends State<FinalExamMarksScreen> {
           final controller = TextEditingController(
             text: examFinalMark?.toString() ?? '',
           );
-          final focusNodeKey = '${studentId}_${subjectId}';
+          final focusNodeKey = '${studentId}_$subjectId';
           if (!_focusNodes.containsKey(focusNodeKey)) {
             _focusNodes[focusNodeKey] = FocusNode();
           }
@@ -431,7 +431,7 @@ class _FinalExamMarksScreenState extends State<FinalExamMarksScreen> {
     final List<String> fixedHeaders = ['SL', 'Name', 'USN'];
     final List<String> subjectHeaders = _subjectsForSemester.expand((subjDoc) {
       final code = subjDoc['subjectCode'] ?? 'N/A';
-      return ['${code}\nIA', '${code}\nExam', '${code}\nTotal'];
+      return ['$code\nIA', '$code\nExam', '$code\nTotal'];
     }).toList();
     final List<String> allHeaders = [...fixedHeaders, ...subjectHeaders];
 
@@ -669,7 +669,7 @@ class _FinalExamMarksScreenState extends State<FinalExamMarksScreen> {
                               return [
                                 DataColumn(
                                   label: Text(
-                                    ' ${code}\n (IA)',
+                                    ' $code\n (IA)',
                                     textAlign: TextAlign.center,
                                     style: TextStyle(
                                       fontWeight: FontWeight.bold,
@@ -679,7 +679,7 @@ class _FinalExamMarksScreenState extends State<FinalExamMarksScreen> {
                                 ),
                                 DataColumn(
                                   label: Text(
-                                    ' ${code}\n (Exam)',
+                                    ' $code\n (Exam)',
                                     textAlign: TextAlign.center,
                                     style: TextStyle(
                                       fontWeight: FontWeight.bold,
@@ -689,7 +689,7 @@ class _FinalExamMarksScreenState extends State<FinalExamMarksScreen> {
                                 ),
                                 DataColumn(
                                   label: Text(
-                                    ' ${code}\n (Total)',
+                                    ' $code\n (Total)',
                                     textAlign: TextAlign.center,
                                     style: TextStyle(
                                       fontWeight: FontWeight.bold,
@@ -698,7 +698,7 @@ class _FinalExamMarksScreenState extends State<FinalExamMarksScreen> {
                                   ),
                                 ),
                               ];
-                            }).toList(),
+                            }),
                           ],
                           // --- Dynamic Rows ---
                           rows: _studentFinalMarks.map((studentModel) {
@@ -756,7 +756,7 @@ class _FinalExamMarksScreenState extends State<FinalExamMarksScreen> {
                                       ),
                                     ),
                                   ];
-                                }).toList(),
+                                }),
                               ],
                             );
                           }).toList(),

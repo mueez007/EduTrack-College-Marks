@@ -113,10 +113,11 @@ class _LoginScreenState extends State<LoginScreen> {
     } catch (e) {
       _showError('An unexpected error occurred. Please try again.');
     } finally {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _isLoading = false;
         });
+      }
     }
   }
 
@@ -171,10 +172,11 @@ class _LoginScreenState extends State<LoginScreen> {
         );
       }
     } finally {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _isLoading = false;
         });
+      }
     }
   }
 

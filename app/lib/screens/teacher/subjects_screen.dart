@@ -113,7 +113,7 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
                     // Dropdown for IA Calculation Rule
                     if (_iaRuleOptions.isNotEmpty)
                       DropdownButtonFormField<String>(
-                        value: dialogSelectedIaRule,
+                        initialValue: dialogSelectedIaRule,
                         decoration: const InputDecoration(labelText: 'IA Calculation Rule', border: OutlineInputBorder()),
                         items: _iaRuleOptions.entries.map((entry) {
                           return DropdownMenuItem<String>(
@@ -134,7 +134,7 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
                     // Dropdown for Final Exam Rule
                      if (_finalExamRuleOptions.isNotEmpty)
                        DropdownButtonFormField<String>(
-                        value: dialogSelectedFinalExamRule,
+                        initialValue: dialogSelectedFinalExamRule,
                         decoration: const InputDecoration(labelText: 'Final Exam/Total Rule', border: OutlineInputBorder()),
                         items: _finalExamRuleOptions.entries.map((entry) {
                           return DropdownMenuItem<String>(
@@ -333,7 +333,7 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
                       ),
                       const SizedBox(height: 15),
                       DropdownButtonFormField<String>(
-                        value: dialogSelectedIaRule,
+                        initialValue: dialogSelectedIaRule,
                         decoration: const InputDecoration(labelText: 'IA Calculation Rule', border: OutlineInputBorder()),
                         items: _iaRuleOptions.entries.map((entry) {
                           return DropdownMenuItem<String>(
@@ -348,7 +348,7 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
                       ),
                       const SizedBox(height: 15),
                       DropdownButtonFormField<String>(
-                        value: dialogSelectedFinalExamRule,
+                        initialValue: dialogSelectedFinalExamRule,
                         decoration: const InputDecoration(labelText: 'Final Exam/Total Rule', border: OutlineInputBorder()),
                         items: _finalExamRuleOptions.entries.map((entry) {
                           return DropdownMenuItem<String>(
