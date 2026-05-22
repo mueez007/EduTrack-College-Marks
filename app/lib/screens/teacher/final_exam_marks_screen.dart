@@ -11,6 +11,7 @@ import 'package:printing/printing.dart';
 import '../../providers/app_state.dart';
 import '../../services/firestore_helper.dart';
 import '../../services/mark_calculation_service.dart';
+import '../../services/results_update_service.dart';
 
 // --- Models for Data Structure (Same as previous output) ---
 class StudentFinalMarkModel {
@@ -67,6 +68,7 @@ class _FinalExamMarksScreenState extends State<FinalExamMarksScreen> {
   List<QueryDocumentSnapshot> _subjectsForSemester = [];
 
   final MarkCalculationService _markCalculator = MarkCalculationService();
+  final ResultsUpdateService _resultsUpdater = ResultsUpdateService();
   final Map<String, FocusNode> _focusNodes = {};
   // Debounce timers for auto-save (one per student+subject)
   final Map<String, Timer> _debounceTimers = {};
@@ -111,9 +113,10 @@ class _FinalExamMarksScreenState extends State<FinalExamMarksScreen> {
     setState(() => _isLoading = true);
 
     try {
-      // 1. Get Subjects for the selected semester and batch
       final deptId = Provider.of<AppState>(context, listen: false).departmentId;
       if (deptId == null) return;
+      
+      // 1. Get Subjects for the selected semester and batch
       QuerySnapshot subjectSnapshot = await FirestoreHelper.deptCollection(deptId, 'subjects')
           .where('batchYear', isEqualTo: _selectedBatchId)
           .where('semester', isEqualTo: _selectedSemester)
@@ -135,9 +138,34 @@ class _FinalExamMarksScreenState extends State<FinalExamMarksScreen> {
           .orderBy('name')
           .get();
 
+      // 3. Parallel fetch all marks and finalExamMarks for this batch + semester
+      final List<QuerySnapshot> results = await Future.wait([
+        FirestoreHelper.deptCollection(deptId, 'marks')
+            .where('batchYear', isEqualTo: _selectedBatchId)
+            .where('semester', isEqualTo: _selectedSemester)
+            .get(),
+        FirestoreHelper.deptCollection(deptId, 'finalExamMarks')
+            .where('batchYear', isEqualTo: _selectedBatchId)
+            .where('semester', isEqualTo: _selectedSemester)
+            .get(),
+      ]);
+      final marksSnap = results[0];
+      final finalExamMarksSnap = results[1];
+
+      // Index documents in memory for O(1) lookups
+      final Map<String, Map<String, dynamic>> marksMap = {};
+      for (var doc in marksSnap.docs) {
+        marksMap[doc.id] = doc.data() as Map<String, dynamic>;
+      }
+
+      final Map<String, Map<String, dynamic>> finalExamMarksMap = {};
+      for (var doc in finalExamMarksSnap.docs) {
+        finalExamMarksMap[doc.id] = doc.data() as Map<String, dynamic>;
+      }
+
       List<StudentFinalMarkModel> loadedData = [];
 
-      // 3. For each student, get IA Final and Exam Final for each subject
+      // 4. Construct rows using in-memory index mapping
       for (var studentDoc in studentSnapshot.docs) {
         final studentData = studentDoc.data() as Map<String, dynamic>;
         final studentId = studentDoc.id;
@@ -150,54 +178,40 @@ class _FinalExamMarksScreenState extends State<FinalExamMarksScreen> {
           final subjectId = subjectDoc.id;
           final subjectCode = subjectDoc['subjectCode'] ?? 'N/A';
           final subjectName = subjectDoc['subjectName'] ?? 'No Name';
-          final subjectDataMap =
-              subjectDoc.data() as Map<String, dynamic>? ?? {};
+          final subjectDataMap = subjectDoc.data() as Map<String, dynamic>? ?? {};
 
-          // a) Get IA Final from 'marks' collection
-          final iaMarkDocId = '${studentId}_$subjectId';
-          DocumentSnapshot iaMarkSnapshot = await FirestoreHelper.deptDoc(deptId, 'marks', iaMarkDocId)
-              .get();
-          double? iaFinalMark =
-              (iaMarkSnapshot.exists
-                      ? (iaMarkSnapshot.data()
-                                as Map<String, dynamic>)['calculated_iaFinal']
-                            as num?
-                      : null)
-                  ?.toDouble();
+          final docId = '${studentId}_$subjectId';
 
-          // b) Get Exam Final from 'finalExamMarks' collection
-          final finalMarkDocId = '${studentId}_$subjectId';
-          DocumentSnapshot finalMarkSnapshot = await FirestoreHelper.deptDoc(deptId, 'finalExamMarks', finalMarkDocId)
-              .get();
-          int? examFinalMark = finalMarkSnapshot.exists
-              ? (finalMarkSnapshot.data() as Map<String, dynamic>)['examFinal']
-                    as int?
-              : null;
+          // a) Retrieve IA Final from the in-memory map
+          final markData = marksMap[docId];
+          double? iaFinalMark = (markData?['calculated_iaFinal'] as num?)?.toDouble();
+
+          // b) Retrieve Exam Final from the in-memory map
+          final finalExamMarkData = finalExamMarksMap[docId];
+          int? examFinalMark = finalExamMarkData?['examFinal'] as int?;
 
           // c) Calculate Total locally
-          double? calculatedTotalMark = _markCalculator
-              .calculateTotalMarksLocal(
-                iaFinal: iaFinalMark,
-                examFinal: examFinalMark,
-                subjectData: subjectDataMap,
-              );
+          double? calculatedTotalMark = _markCalculator.calculateTotalMarksLocal(
+            iaFinal: iaFinalMark,
+            examFinal: examFinalMark,
+            subjectData: subjectDataMap,
+          );
 
-          // c2) AUTO-REPAIR: If finalExamMarks doc exists but has wrong/missing iaFinal,
-          // update it immediately so student view shows correct data
-          if (finalMarkSnapshot.exists && iaFinalMark != null && examFinalMark != null) {
-            final existingData = finalMarkSnapshot.data() as Map<String, dynamic>;
-            final existingIaFinal = (existingData['iaFinal'] as num?)?.toDouble();
-            final existingTotal = (existingData['calculated_total'] as num?)?.toDouble();
+          // c2) AUTO-REPAIR: If finalExamMarks doc exists in memory but has wrong/missing iaFinal,
+          // update it immediately so student view shows correct data.
+          if (finalExamMarkData != null && iaFinalMark != null && examFinalMark != null) {
+            final existingIaFinal = (finalExamMarkData['iaFinal'] as num?)?.toDouble();
+            final existingTotal = (finalExamMarkData['calculated_total'] as num?)?.toDouble();
             
             // Fix if iaFinal is missing/wrong OR calculated_total is wrong
             if (existingIaFinal != iaFinalMark || existingTotal != calculatedTotalMark) {
               // Fire-and-forget update to fix stale data
-              FirestoreHelper.deptDoc(deptId, 'finalExamMarks', finalMarkDocId)
+              FirestoreHelper.deptDoc(deptId, 'finalExamMarks', docId)
                   .update({
                 'iaFinal': iaFinalMark,
                 'calculated_total': calculatedTotalMark,
-              }).catchError((e) => print('Auto-repair failed for $finalMarkDocId: $e'));
-              print('[AUTO-REPAIR] Fixed finalExamMarks/$finalMarkDocId: iaFinal=$iaFinalMark, total=$calculatedTotalMark');
+              }).catchError((e) => print('Auto-repair failed for $docId: $e'));
+              print('[AUTO-REPAIR] Fixed finalExamMarks/$docId: iaFinal=$iaFinalMark, total=$calculatedTotalMark');
             }
           }
 
@@ -218,7 +232,7 @@ class _FinalExamMarksScreenState extends State<FinalExamMarksScreen> {
             calculatedTotal: calculatedTotalMark,
             controller: controller,
             focusNode: _focusNodes[focusNodeKey]!,
-            markDocId: finalMarkDocId, // ID for saving finalExamMarks
+            markDocId: docId, // ID for saving finalExamMarks
             subjectDataMap: subjectDataMap,
           );
         }
@@ -294,6 +308,8 @@ class _FinalExamMarksScreenState extends State<FinalExamMarksScreen> {
       );
 
       // Prepare data for Firestore ('finalExamMarks' collection)
+      // Flutter-only architecture: we write calculated_total here and
+      // trigger selective SGPA/CGPA recalculation client-side.
       Map<String, dynamic> dataToSave = {
         'iaFinal': latestIaFinal,
         'examFinal': examMark,
@@ -326,6 +342,15 @@ class _FinalExamMarksScreenState extends State<FinalExamMarksScreen> {
           subjectData.calculatedTotal = newCalculatedTotal;
         });
       }
+
+      // Trigger selective SGPA/CGPA recalculation for ONLY this student + semester
+      // This runs asynchronously — fire-and-forget, doesn't block the UI
+      _resultsUpdater.recalculateStudentSemester(
+        deptId: deptId,
+        studentId: studentModel.studentId,
+        semester: _selectedSemester,
+        batchYear: _selectedBatchId!,
+      );
     } catch (e) {
       print("Error saving final mark: $e");
       _showError(

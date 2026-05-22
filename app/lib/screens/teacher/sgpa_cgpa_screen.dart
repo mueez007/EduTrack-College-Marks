@@ -9,8 +9,7 @@ import 'package:printing/printing.dart';
 
 import '../../providers/app_state.dart';
 import '../../services/firestore_helper.dart';
-import '../../services/results_calculation_service.dart';
-import '../../services/mark_calculation_service.dart';
+import '../../services/results_update_service.dart';
 
 // --- Data Models ---
 class StudentResultModel {
@@ -61,8 +60,7 @@ class _SgpaCgpaScreenState extends State<SgpaCgpaScreen> {
   bool _isLoading = true;
   List<StudentResultModel> _results = [];
   
-  // Services
-  final ResultsCalculationService _resultCalculator = ResultsCalculationService();
+
 
   double _classAverageSgpa = 0.0;
   double _classAverageCgpa = 0.0;
@@ -73,11 +71,11 @@ class _SgpaCgpaScreenState extends State<SgpaCgpaScreen> {
   void initState() {
     super.initState();
     _selectedBatchId = Provider.of<AppState>(context, listen: false).selectedBatchId;
-    _loadAllDataAndCalculate();
+    _loadCalculatedResults();
   }
   
-  // --- Core Calculation and Data Loading ---
-  Future<void> _loadAllDataAndCalculate() async {
+  // --- Load Pre-calculated Results from Firestore directly ---
+  Future<void> _loadCalculatedResults() async {
     if (_selectedBatchId == null) {
       setState(() => _isLoading = false);
       _showError("Batch ID is missing.");
@@ -86,260 +84,140 @@ class _SgpaCgpaScreenState extends State<SgpaCgpaScreen> {
     setState(() => _isLoading = true);
 
     try {
-      // 1. Get Subjects to find credits and max marks per subject
       final deptId = Provider.of<AppState>(context, listen: false).departmentId;
       if (deptId == null) return;
-      QuerySnapshot subjectSnapshot = await FirestoreHelper.deptCollection(deptId, 'subjects')
+
+      // 1. Fetch pre-calculated semesterResults from Firestore directly (1 read query!)
+      QuerySnapshot resultsSnapshot = await FirestoreHelper.deptCollection(deptId, 'semesterResults')
           .where('batchYear', isEqualTo: _selectedBatchId)
           .where('semester', isEqualTo: _selectedSemester)
           .get();
-      
-      final int subjectCount = subjectSnapshot.docs.length;
-      if (subjectCount == 0) {
-        _showSnackbar("No subjects found for Sem $_selectedSemester. Cannot calculate.", Colors.orange);
-        setState(() { _results = []; _isLoading = false; });
-        return;
-      }
-      
-      // Build a map of subjectId -> {credits, maxSubjectTotal} for quick lookup
-      Map<String, Map<String, dynamic>> subjectInfoMap = {};
-      for (var doc in subjectSnapshot.docs) {
-        final data = doc.data() as Map<String, dynamic>;
-        subjectInfoMap[doc.id] = {
-          'credits': data['credits'] as int? ?? 0,
-          'maxSubjectTotal': data['maxSubjectTotal'] as int? ?? 100,
-        };
-      }
-      
-      // 2. Get All Students in the batch
-      QuerySnapshot studentSnapshot = await FirestoreHelper.deptCollection(deptId, 'students')
-          .where('batchYear', isEqualTo: _selectedBatchId)
-          .get();
-          
-      List<StudentResultModel> calculatedResults = [];
+
+      List<StudentResultModel> loadedResults = [];
       double totalSgpaSum = 0.0;
       double totalCgpaSum = 0.0;
 
-      // 3. Loop through students and calculate their results
-      for (var studentDoc in studentSnapshot.docs) {
-        final studentData = studentDoc.data() as Map<String, dynamic>;
-        final studentId = studentDoc.id; 
-        final usn = studentData['usn'] ?? 'N/A';
-        final name = studentData['name'] ?? 'No Name';
+      for (var doc in resultsSnapshot.docs) {
+        final data = doc.data() as Map<String, dynamic>;
+        final studentId = data['studentId'] as String;
+        final name = data['name'] as String? ?? data['studentName'] as String? ?? 'No Name';
+        final usn = data['usn'] as String? ?? 'N/A';
+        final sgpa = (data['sgpa'] as num?)?.toDouble() ?? 0.0;
+        final cgpa = (data['cgpa'] as num?)?.toDouble() ?? 0.0;
+        final totalMarks = (data['totalMarksObtained'] as num?)?.toInt() ?? 0;
+        final totalCredits = (data['totalCredits'] as num?)?.toInt() ?? 0;
+        final rank = (data['rank'] as num?)?.toInt();
 
-        // 3a. Get all final marks for this student/semester
-        QuerySnapshot finalMarksSnapshot = await FirestoreHelper.deptCollection(deptId, 'finalExamMarks')
-            .where('studentRef', isEqualTo: FirestoreHelper.deptDocRef(deptId, 'students', studentId))
-            .where('semester', isEqualTo: _selectedSemester)
-            .get();
-        
-        int totalMarksObtained = 0;
-        int totalCredits = 0;
-        
-        // Build the list of subject results for VTU SGPA calculation
-        List<Map<String, dynamic>> subjectResults = [];
-        final markCalc = MarkCalculationService();
-        
-        for (var markDoc in finalMarksSnapshot.docs) {
-          final markData = markDoc.data() as Map<String, dynamic>;
-          
-          // Get the subject reference to find credits and maxSubjectTotal
-          final DocumentReference? subjectRef = markData['subjectRef'] as DocumentReference?;
-          String? subId;
-          if (subjectRef != null) {
-            subId = subjectRef.id;
-          }
-          
-          // Look up credits and maxSubjectTotal from our subject map
-          int credits = 0;
-          int maxSubjectTotal = 100;
-          if (subId != null && subjectInfoMap.containsKey(subId)) {
-            credits = subjectInfoMap[subId]!['credits'] as int;
-            maxSubjectTotal = subjectInfoMap[subId]!['maxSubjectTotal'] as int;
-          }
-          
-          // === ALWAYS RECALCULATE FROM SOURCE DATA ===
-          // 1. Get fresh iaFinal from marks collection (source of truth)
-          final iaMarkDocId = '${studentId}_$subId';
-          double freshIaFinal = 0.0;
-          try {
-            DocumentSnapshot iaMarkSnapshot = await FirestoreHelper.deptDoc(deptId, 'marks', iaMarkDocId)
-                .get();
-            if (iaMarkSnapshot.exists) {
-              final iaData = iaMarkSnapshot.data() as Map<String, dynamic>;
-              freshIaFinal = (iaData['calculated_iaFinal'] as num?)?.toDouble() ?? 0.0;
-              
-              // If calculated_iaFinal not stored, recalculate from raw IA marks
-              if (freshIaFinal == 0.0) {
-                // Get subject data for calculation rules
-                final subjectDocSnapshot = await subjectRef?.get();
-                if (subjectDocSnapshot != null && subjectDocSnapshot.exists) {
-                  final fullSubjectData = subjectDocSnapshot.data() as Map<String, dynamic>;
-                  freshIaFinal = markCalc.calculateIaFinalLocal(
-                    ia1: iaData['ia_1'] as int?,
-                    ia2: iaData['ia_2'] as int?,
-                    ia3: iaData['ia_3'] as int?,
-                    projectOrAssignment: iaData['projectOrAssignment'] as int?,
-                    subjectData: fullSubjectData,
-                  );
-                }
-              }
-            }
-          } catch (e) {
-            print('[SGPA] Warning: Could not fetch IA marks for $iaMarkDocId: $e');
-          }
-          
-          // 2. Get examFinal from finalExamMarks (already have it)
-          final int examFinal = (markData['examFinal'] as num?)?.toInt() ?? 0;
-          
-          // 3. Recalculate total from fresh source data
-          double calculatedTotal = 0.0;
-          try {
-            final subjectDocSnapshot = await subjectRef?.get();
-            if (subjectDocSnapshot != null && subjectDocSnapshot.exists) {
-              final fullSubjectData = subjectDocSnapshot.data() as Map<String, dynamic>;
-              calculatedTotal = markCalc.calculateTotalMarksLocal(
-                iaFinal: freshIaFinal,
-                examFinal: examFinal,
-                subjectData: fullSubjectData,
-              );
-            }
-          } catch (e) {
-            // Fallback to stored value
-            calculatedTotal = (markData['calculated_total'] as num?)?.toDouble() ?? 0.0;
-            print('[SGPA] Warning: Could not recalculate total for $iaMarkDocId, using stored: $calculatedTotal');
-          }
-          
-          // 4. Auto-repair: update finalExamMarks if stored values differ
-          final storedIaFinal = (markData['iaFinal'] as num?)?.toDouble() ?? 0.0;
-          final storedTotal = (markData['calculated_total'] as num?)?.toDouble() ?? 0.0;
-          if ((storedIaFinal - freshIaFinal).abs() > 0.01 || (storedTotal - calculatedTotal).abs() > 0.01) {
-            markDoc.reference.update({
-              'iaFinal': freshIaFinal,
-              'calculated_total': calculatedTotal,
-            }).catchError((e) => print('[SGPA] Auto-repair failed for $iaMarkDocId: $e'));
-            print('[SGPA AUTO-REPAIR] Fixed $iaMarkDocId: iaFinal=$freshIaFinal (was $storedIaFinal), total=$calculatedTotal (was $storedTotal)');
-          }
-          
-          totalMarksObtained += calculatedTotal.round();
-          totalCredits += credits;
-          
-          // Scale marks to 100 for grade point calculation
-          double scaledMarks = calculatedTotal;
-          if (maxSubjectTotal != 100 && maxSubjectTotal > 0) {
-            scaledMarks = (calculatedTotal / maxSubjectTotal) * 100.0;
-          }
-          int gradePoint = _resultCalculator.getGradePoint(scaledMarks);
-          
-          print('[SGPA DEBUG] Student: $name | Subject: $subId | iaFinal=$freshIaFinal | exam=$examFinal | Total: $calculatedTotal/$maxSubjectTotal | Scaled: ${scaledMarks.toStringAsFixed(1)} | GP: $gradePoint | Credits: $credits | C×G: ${credits * gradePoint}');
-          
-          subjectResults.add({
-            'totalMarks': calculatedTotal,
-            'maxSubjectTotal': maxSubjectTotal,
-            'credits': credits,
-          });
-        }
-
-        // 3b. Calculate SGPA using VTU Credit-Based Formula
-        // SGPA = Σ(Ci × Gi) / Σ(Ci)
-        double sgpa = _resultCalculator.calculateSgpa(
-          subjectResults: subjectResults,
-        );
-        
-        print('[SGPA DEBUG] Student: $name | Total Credits: $totalCredits | SGPA: $sgpa');
-        
-        // 3c. Fetch previous SGPAs for CGPA
-        List<double> prevSgpas = [];
-        if (_selectedSemester > 1) { 
-           QuerySnapshot prevResults = await FirestoreHelper.deptCollection(deptId, 'semesterResults')
-                .where('studentId', isEqualTo: studentId) 
-                .where('semester', isLessThan: _selectedSemester)
-                .get();
-
-           for (var resultDoc in prevResults.docs) {
-             prevSgpas.add((resultDoc['sgpa'] as num).toDouble());
-           }
-        }
-        
-        // 3d. Calculate CGPA (average of all semester SGPAs)
-        double cgpa = _resultCalculator.calculateCgpa(
-          currentSgpa: sgpa, 
-          previousSgpas: prevSgpas,
-        );
-        
-        // Add to list and running totals
-        calculatedResults.add(StudentResultModel(
+        loadedResults.add(StudentResultModel(
           studentId: studentId,
           name: name,
           usn: usn,
           sgpa: sgpa,
           cgpa: cgpa,
-          totalMarksObtained: totalMarksObtained,
+          totalMarksObtained: totalMarks,
           totalCredits: totalCredits,
+          rank: rank,
         ));
 
         totalSgpaSum += sgpa;
         totalCgpaSum += cgpa;
-
-        // 3e. Save result to Firestore for persistence
-        await FirestoreHelper.deptDoc(deptId, 'semesterResults', '${studentId}_S$_selectedSemester').set({
-          'studentId': studentId,
-          'name': name,
-          'usn': usn,
-          'batchYear': _selectedBatchId,
-          'semester': _selectedSemester,
-          'sgpa': sgpa,
-          'cgpa': cgpa,
-          'totalMarksObtained': totalMarksObtained,
-          'totalCredits': totalCredits,
-          'rank': 0, 
-          'lastCalculated': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
-
-      } // End student loop
-
-      // 4. Calculate Class Averages and Assign Ranks
-      _classAverageSgpa = calculatedResults.isNotEmpty ? totalSgpaSum / calculatedResults.length : 0.0;
-      _classAverageCgpa = calculatedResults.isNotEmpty ? totalCgpaSum / calculatedResults.length : 0.0;
-      
-      _assignRanks(calculatedResults); // Assigns rank property
-      
-      // 5. Update Ranks in Firestore (PublicRanks & semesterResults)
-      Map<String, dynamic> rankMap = {};
-      for (var result in calculatedResults) {
-          // Update individual semesterResults document with final rank
-          FirestoreHelper.deptDoc(deptId, 'semesterResults', '${result.studentId}_S$_selectedSemester').update({
-              'rank': result.rank,
-          });
-          // Save rank and name to the public map (for student comparison)
-          rankMap['rank_of_${result.studentId}'] = result.rank; 
-          rankMap['name_of_${result.studentId}'] = result.name; 
       }
-      
-      // Save the single public document containing all rank data
-      await FirestoreHelper.deptDoc(deptId, 'publicRanks', 'S$_selectedSemester-$_selectedBatchId').set({
-          'rankList': rankMap,
-          'lastUpdated': FieldValue.serverTimestamp(),
-          'classAverageSGPA': _classAverageSgpa,
-          'classAverageCGPA': _classAverageCgpa,
-      }, SetOptions(merge: true));
-      
-      // 6. Update UI
-      if(mounted) {
+
+      // 2. Assign ranks in-memory by sorting the loaded results
+      _assignRanks(loadedResults);
+
+      _classAverageSgpa = loadedResults.isNotEmpty ? totalSgpaSum / loadedResults.length : 0.0;
+      _classAverageCgpa = loadedResults.isNotEmpty ? totalCgpaSum / loadedResults.length : 0.0;
+
+      if (mounted) {
         setState(() {
-          _results = calculatedResults;
+          _results = loadedResults;
           _isLoading = false;
-          _sortResults(_currentSortField, _isAscending); 
+          _sortResults(_currentSortField, _isAscending);
         });
-        _showSnackbar("Results for Sem $_selectedSemester calculated and saved.", Colors.green);
+      }
+    } catch (e) {
+      print("Error loading calculated results: $e");
+      if (mounted) {
+        setState(() => _isLoading = false);
+        _showError("Failed to load results: ${e.toString()}");
+      }
+    }
+  }
+
+  // --- Recalculate All: Client-side batch backfill (replaces Cloud Function) ---
+  Future<void> _recalculateAll() async {
+    if (_selectedBatchId == null) {
+      _showError("Batch ID is missing.");
+      return;
+    }
+    setState(() => _isLoading = true);
+
+    try {
+      final deptId = Provider.of<AppState>(context, listen: false).departmentId;
+      if (deptId == null) return;
+
+      _showSnackbar("Recalculating results for Sem $_selectedSemester... This may take a moment.", Colors.blue);
+
+      final resultsUpdater = ResultsUpdateService();
+      final message = await resultsUpdater.backfillBatchSemester(
+        deptId: deptId,
+        batchYear: _selectedBatchId!,
+        semester: _selectedSemester,
+      );
+
+      _showSnackbar(message, Colors.green);
+
+      // Reload the results after backfill
+      await _loadCalculatedResults();
+    } catch (e) {
+      print("Error recalculating results: $e");
+      if (mounted) {
+        setState(() => _isLoading = false);
+        _showError("Failed to recalculate: ${e.toString()}");
+      }
+    }
+  }
+
+  // --- Publish in-memory calculated ranks back to Firestore in a single Batch Write ---
+  Future<void> _publishRanks() async {
+    if (_results.isEmpty) {
+      _showError("No results to publish.");
+      return;
+    }
+    setState(() => _isLoading = true);
+
+    try {
+      final deptId = Provider.of<AppState>(context, listen: false).departmentId;
+      if (deptId == null) return;
+
+      final batch = FirebaseFirestore.instance.batch();
+      Map<String, dynamic> rankMap = {};
+
+      for (var result in _results) {
+        final resultRef = FirestoreHelper.deptDoc(deptId, 'semesterResults', '${result.studentId}_S$_selectedSemester');
+        batch.update(resultRef, {'rank': result.rank});
+
+        rankMap['rank_of_${result.studentId}'] = result.rank;
+        rankMap['name_of_${result.studentId}'] = result.name;
       }
 
+      final publicRankRef = FirestoreHelper.deptDoc(deptId, 'publicRanks', 'S$_selectedSemester-$_selectedBatchId');
+      batch.set(publicRankRef, {
+        'rankList': rankMap,
+        'lastUpdated': FieldValue.serverTimestamp(),
+        'classAverageSGPA': _classAverageSgpa,
+        'classAverageCGPA': _classAverageCgpa,
+      }, SetOptions(merge: true));
+
+      await batch.commit();
+
+      _showSnackbar("Ranks successfully published to student portal.", Colors.green);
+      setState(() => _isLoading = false);
     } catch (e) {
-      print("Error during calculation: $e");
-      if(mounted) {
-        setState(() => _isLoading = false);
-        _showError("Calculation Failed: ${e.toString()}");
-      }
+      print("Error publishing ranks: $e");
+      setState(() => _isLoading = false);
+      _showError("Failed to publish ranks: ${e.toString()}");
     }
   }
 
@@ -430,9 +308,19 @@ class _SgpaCgpaScreenState extends State<SgpaCgpaScreen> {
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         actions: [
           IconButton(
+            icon: const Icon(Icons.calculate_outlined),
+            tooltip: 'Recalculate All Results',
+            onPressed: _isLoading ? null : _recalculateAll,
+          ),
+          IconButton(
             icon: const Icon(Icons.refresh),
-            tooltip: 'Recalculate Results',
-            onPressed: _isLoading ? null : _loadAllDataAndCalculate,
+            tooltip: 'Reload Results',
+            onPressed: _isLoading ? null : _loadCalculatedResults,
+          ),
+          IconButton(
+            icon: const Icon(Icons.publish_rounded),
+            tooltip: 'Publish Ranks to Students',
+            onPressed: _isLoading || _results.isEmpty ? null : _publishRanks,
           ),
           IconButton(
             icon: const Icon(Icons.picture_as_pdf_outlined),
@@ -464,7 +352,7 @@ class _SgpaCgpaScreenState extends State<SgpaCgpaScreen> {
                           setState(() {
                             _selectedSemester = semester;
                           });
-                          _loadAllDataAndCalculate(); // Recalculate/load data for the new semester
+                          _loadCalculatedResults(); // Load pre-calculated results instantly!
                         }
                       },
                       selectedColor: Theme.of(context).primaryColor,

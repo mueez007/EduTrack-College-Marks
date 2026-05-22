@@ -44,36 +44,47 @@ class _StudentAttendanceScreenState extends State<StudentAttendanceScreen> {
     try {
       final deptId = Provider.of<AppState>(context, listen: false).departmentId;
       if (deptId == null) return;
-      // First load all subjects for this semester
+      
+      // 1. Fetch all subjects for this semester in one query
       QuerySnapshot subjectSnap = await FirestoreHelper.deptCollection(deptId, 'subjects')
           .where('batchYear', isEqualTo: widget.batchId)
           .where('semester', isEqualTo: widget.semester)
           .orderBy('subjectCode')
           .get();
 
+      // 2. Fetch ALL monthly attendance documents for this student + semester in a single query
+      QuerySnapshot monthlySnap = await FirestoreHelper.deptCollection(deptId, 'attendanceMonthly')
+          .where('studentId', isEqualTo: widget.studentId)
+          .where('semester', isEqualTo: widget.semester)
+          .get();
+
+      // Index the attendance records by subjectId in memory
+      final Map<String, List<Map<String, dynamic>>> attendanceMap = {};
+      for (var doc in monthlySnap.docs) {
+        final data = doc.data() as Map<String, dynamic>;
+        final String? subId = data['subjectId'] as String?;
+        if (subId != null) {
+          attendanceMap.putIfAbsent(subId, () => []).add(data);
+        }
+      }
+
       List<_SubjectAttendance> results = [];
       int overallTotal = 0;
       int overallAttended = 0;
 
+      // 3. Process each subject using the in-memory attendance map
       for (var subDoc in subjectSnap.docs) {
         final subData = subDoc.data() as Map<String, dynamic>;
         final subjectName = subData['subjectName'] ?? 'Unknown';
         final subjectCode = subData['subjectCode'] ?? '???';
         final subjectId = subDoc.id;
 
-        // Query all monthly records for this student + subject
-        QuerySnapshot monthlySnap = await FirestoreHelper.deptCollection(deptId, 'attendanceMonthly')
-            .where('studentId', isEqualTo: widget.studentId)
-            .where('subjectId', isEqualTo: subjectId)
-            .where('semester', isEqualTo: widget.semester)
-            .get();
-
         int totalClasses = 0;
         int attendedClasses = 0;
 
-        // Aggregate across all months
-        for (var monthDoc in monthlySnap.docs) {
-          final monthData = monthDoc.data() as Map<String, dynamic>;
+        // Retrieve from in-memory map instead of making a database query in a loop
+        final monthlyDocs = attendanceMap[subjectId] ?? [];
+        for (var monthData in monthlyDocs) {
           totalClasses += (monthData['totalClasses'] as num?)?.toInt() ?? 0;
           attendedClasses += (monthData['attendedClasses'] as num?)?.toInt() ?? 0;
         }

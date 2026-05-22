@@ -12,6 +12,7 @@ import '../../providers/app_state.dart';
 import '../../services/firestore_helper.dart';
 import '../../models/student_mark_model.dart';
 import '../../services/mark_calculation_service.dart';
+import '../../services/results_update_service.dart';
 import 'ia_question_config_screen.dart';
 
 class MarksEntryScreen extends StatefulWidget {
@@ -41,6 +42,7 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
   final Map<String, Timer> _debounceTimers = {};
 
   final MarkCalculationService _markCalculator = MarkCalculationService();
+  final ResultsUpdateService _resultsUpdater = ResultsUpdateService();
 
   /// Whether this is a 30-mark objective subject (direct IA entry, no question-wise).
   bool get _isObjectiveSubject => (widget.subjectData['baseInternalMax'] ?? 40) == 30;
@@ -193,10 +195,25 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
     try {
       final deptId = Provider.of<AppState>(context, listen: false).departmentId;
       if (deptId == null) return;
+      
+      // 1. Fetch all students in this batch
       QuerySnapshot studentSnapshot = await FirestoreHelper.deptCollection(deptId, 'students')
           .where('batchYear', isEqualTo: _selectedBatchId)
           .orderBy('name')
           .get();
+
+      // 2. Fetch ALL marks documents for this subject + batch in a single query
+      final DocumentReference subjectRef = FirestoreHelper.deptDocRef(deptId, 'subjects', widget.subjectId);
+      QuerySnapshot marksSnapshot = await FirestoreHelper.deptCollection(deptId, 'marks')
+          .where('batchYear', isEqualTo: _selectedBatchId)
+          .where('subjectRef', isEqualTo: subjectRef)
+          .get();
+
+      // Index marks by their document ID in memory for O(1) lookups
+      final Map<String, Map<String, dynamic>> marksMap = {};
+      for (var doc in marksSnapshot.docs) {
+        marksMap[doc.id] = doc.data() as Map<String, dynamic>;
+      }
 
       List<StudentMarkModel> loadedMarks = [];
 
@@ -207,12 +224,7 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
         final studentName = studentData['name'] ?? 'No Name';
         final markDocId = '${studentId}_${widget.subjectId}';
 
-        DocumentSnapshot markSnapshot = await FirestoreHelper.deptDoc(deptId, 'marks', markDocId)
-            .get();
-
-        Map<String, dynamic>? markData = markSnapshot.exists
-            ? markSnapshot.data() as Map<String, dynamic>
-            : null;
+        final markData = marksMap[markDocId];
 
         // Safely extract numeric values for initial calculation
         int? ia1 = markData?['ia_1'] as int?;
@@ -353,10 +365,21 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
         'lastUpdated': FieldValue.serverTimestamp(),
       };
 
-      // Save to Firestore
+       // Save to Firestore
       final deptId = Provider.of<AppState>(context, listen: false).departmentId!;
       await FirestoreHelper.deptDoc(deptId, 'marks', studentMark.markDocId)
           .set(dataToSave, SetOptions(merge: true));
+
+      // Propagate iaFinal to finalExamMarks and trigger recalculation if exam marks exist
+      // This replaces the Cloud Function trigger chain
+      _propagateIaToFinalExamMarks(
+        deptId: deptId,
+        markDocId: studentMark.markDocId,
+        studentId: studentMark.studentId,
+        iaFinal: calculatedFinal,
+        semester: widget.subjectData['semester'] as int? ?? 1,
+        batchYear: _selectedBatchId!,
+      );
 
       // Update local state and recalculate averages immediately
       if (mounted) {
@@ -396,6 +419,70 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
           ),
         );
       }
+    }
+  }
+
+  /// Propagates updated iaFinal to finalExamMarks and triggers SGPA/CGPA
+  /// recalculation if exam marks already exist. This replaces Cloud Function triggers.
+  /// Runs asynchronously (fire-and-forget) so it doesn't block the UI.
+  Future<void> _propagateIaToFinalExamMarks({
+    required String deptId,
+    required String markDocId,
+    required String studentId,
+    required double iaFinal,
+    required int semester,
+    required String batchYear,
+  }) async {
+    try {
+      // Check if finalExamMarks doc exists and has examFinal
+      final finalExamDoc = await FirestoreHelper.deptDoc(deptId, 'finalExamMarks', markDocId).get();
+
+      if (finalExamDoc.exists) {
+        final finalExamData = finalExamDoc.data() as Map<String, dynamic>;
+        final existingExamFinal = finalExamData['examFinal'];
+
+        if (existingExamFinal != null) {
+          // Exam marks exist — recalculate total and update
+          final subjectRefData = finalExamData['subjectRef'] as DocumentReference?;
+          Map<String, dynamic> subjectData = widget.subjectData;
+
+          // If we have a subjectRef, use its data for calculation accuracy
+          if (subjectRefData != null) {
+            final subjectDoc = await subjectRefData.get();
+            if (subjectDoc.exists) {
+              subjectData = subjectDoc.data() as Map<String, dynamic>;
+            }
+          }
+
+          final newTotal = _markCalculator.calculateTotalMarksLocal(
+            iaFinal: iaFinal,
+            examFinal: existingExamFinal as int,
+            subjectData: subjectData,
+          );
+
+          // Update finalExamMarks with new iaFinal and recalculated total
+          await FirestoreHelper.deptDoc(deptId, 'finalExamMarks', markDocId).update({
+            'iaFinal': iaFinal,
+            'calculated_total': newTotal,
+          });
+
+          // Trigger SGPA/CGPA recalculation for this student + semester
+          await _resultsUpdater.recalculateStudentSemester(
+            deptId: deptId,
+            studentId: studentId,
+            semester: semester,
+            batchYear: batchYear,
+          );
+        } else {
+          // No exam marks yet — just update iaFinal in finalExamMarks
+          await FirestoreHelper.deptDoc(deptId, 'finalExamMarks', markDocId).update({
+            'iaFinal': iaFinal,
+          });
+        }
+      }
+      // If finalExamMarks doc doesn't exist yet, no propagation needed
+    } catch (e) {
+      print('IA propagation skipped for $markDocId: $e');
     }
   }
 
@@ -601,7 +688,7 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
     final batchName =
         Provider.of<AppState>(context, listen: false).selectedBatchName ??
         'Unknown Batch';
-    final semester = widget.subjectData['semester'] ?? '?';
+
 
     // --- Define Table Headers ---
     final String iaRule = widget.subjectData['iaCalculationRule'] ?? 'DEFAULT';

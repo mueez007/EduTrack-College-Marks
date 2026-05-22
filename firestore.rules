@@ -1,10 +1,104 @@
 rules_version = '2';
-
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Allow access to everything for authenticated users temporarily to debug
-    match /{document=**} {
-      allow read, write: if request.auth != null;
+    
+    // Help verify if the user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Helper to get active user role from department-scoped users collection
+    function getUserData(deptId) {
+      return get(/databases/$(database)/documents/departments/$(deptId)/users/$(request.auth.uid)).data;
+    }
+
+    // --- Root-level users collection (used by Firebase Auth role verification) ---
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+
+    match /departments/{deptId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+
+      // --- Teacher Credentials (used by login + admin screen) ---
+      match /teacher_credentials/{credId} {
+        allow read: if isAuthenticated();
+        allow write: if isAuthenticated();
+      }
+
+      // --- Batches ---
+      match /batches/{batchId} {
+        allow read: if isAuthenticated();
+        allow write: if isAuthenticated();
+      }
+
+      // --- Students ---
+      match /students/{studentId} {
+        allow read: if isAuthenticated();
+        allow write: if isAuthenticated();
+      }
+
+      // --- Subjects ---
+      match /subjects/{subjectId} {
+        allow read: if isAuthenticated();
+        allow write: if isAuthenticated();
+      }
+
+      // --- IA Marks ---
+      match /marks/{markId} {
+        allow read: if isAuthenticated();
+        allow write: if isAuthenticated();
+      }
+
+      // --- Final Exam Marks ---
+      match /finalExamMarks/{markId} {
+        allow read: if isAuthenticated();
+        allow write: if isAuthenticated();
+      }
+
+      // --- Semester Results (SGPA/CGPA) ---
+      match /semesterResults/{resultId} {
+        allow read: if isAuthenticated();
+        allow write: if isAuthenticated();
+      }
+
+      // --- Public Ranks ---
+      match /publicRanks/{rankId} {
+        allow read: if isAuthenticated();
+        allow write: if isAuthenticated();
+      }
+
+      // --- Absentees (daily attendance) ---
+      match /absentees/{absenteeId} {
+        allow read: if isAuthenticated();
+        allow write: if isAuthenticated();
+      }
+      
+      // --- Monthly Attendance ---
+      match /attendanceMonthly/{attId} {
+        allow read: if isAuthenticated();
+        allow write: if isAuthenticated();
+      }
+
+      // --- IA Question Configs ---
+      match /ia_configs/{configId} {
+        allow read: if isAuthenticated();
+        allow write: if isAuthenticated();
+      }
+
+      // --- IA Question Details ---
+      match /ia_details/{detailId} {
+        allow read: if isAuthenticated();
+        allow write: if isAuthenticated();
+      }
+
+      // --- User Metadata (department-scoped) ---
+      match /users/{userId} {
+        allow read: if isAuthenticated();
+        allow write: if isAuthenticated();
+      }
     }
   }
 }
