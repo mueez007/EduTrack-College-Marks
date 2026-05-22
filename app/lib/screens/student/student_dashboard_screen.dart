@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:provider/provider.dart';
 
+import '../../providers/app_state.dart';
+import '../../services/firestore_helper.dart';
 import '../login_screen.dart';
 import 'student_subject_view_screen.dart';
 import 'student_attendance_screen.dart';
@@ -47,8 +50,9 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
 
     try {
       // Query Firestore for student by USN
-      QuerySnapshot studentQuery = await FirebaseFirestore.instance
-          .collection('students')
+      final deptId = Provider.of<AppState>(context, listen: false).departmentId;
+      if (deptId == null) return;
+      QuerySnapshot studentQuery = await FirestoreHelper.deptCollection(deptId, 'students')
           .where('usn', isEqualTo: _studentUsn)
           .limit(1)
           .get();
@@ -66,17 +70,18 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
         // Also create/update user record for Firebase Auth compatibility
         final currentUser = FirebaseAuth.instance.currentUser;
         if (currentUser != null) {
-          await FirebaseFirestore.instance
-              .collection('users')
-              .doc(currentUser.uid)
-              .set({
-            'role': 'student',
-            'usn': _studentUsn,
-            'name': _studentName,
-            'batchYear': _selectedBatchId,
-            'studentId': studentDoc.id,
-            'createdAt': FieldValue.serverTimestamp(),
-          }, SetOptions(merge: true));
+          final deptId2 = Provider.of<AppState>(context, listen: false).departmentId;
+          if (deptId2 != null) {
+            await FirestoreHelper.deptDoc(deptId2, 'users', currentUser.uid)
+                .set({
+              'role': 'student',
+              'usn': _studentUsn,
+              'name': _studentName,
+              'batchYear': _selectedBatchId,
+              'studentId': studentDoc.id,
+              'createdAt': FieldValue.serverTimestamp(),
+            }, SetOptions(merge: true));
+          }
         }
 
         _loadSemesterData();
@@ -93,9 +98,9 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
     if (_studentId == null) return;
 
     try {
-      DocumentSnapshot userDoc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(_studentId!)
+      final deptId = Provider.of<AppState>(context, listen: false).departmentId;
+      if (deptId == null) return;
+      DocumentSnapshot userDoc = await FirestoreHelper.deptDoc(deptId, 'users', _studentId!)
           .get();
       if (userDoc.exists) {
         final data = userDoc.data() as Map<String, dynamic>;
@@ -117,11 +122,12 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
 
     // Build the students collection document id which matches how teacher writes data
     final String studentDocId = '${_selectedBatchId}_$_studentUsn';
+    final deptId = Provider.of<AppState>(context, listen: false).departmentId;
+    if (deptId == null) return;
 
     // 1. Subjects Stream (filtered by student's batch and selected semester)
     setState(() {
-      _subjectsStream = FirebaseFirestore.instance
-          .collection('subjects')
+      _subjectsStream = FirestoreHelper.deptCollection(deptId, 'subjects')
           .where('batchYear', isEqualTo: _selectedBatchId)
           .where('semester', isEqualTo: _selectedSemester)
           .orderBy('subjectCode')
@@ -129,9 +135,7 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
 
       // 2. Result Stream (for the main rank card)
       final resultDocId = '${studentDocId}_S$_selectedSemester';
-      _resultStream = FirebaseFirestore.instance
-          .collection('semesterResults')
-          .doc(resultDocId)
+      _resultStream = FirestoreHelper.deptDoc(deptId, 'semesterResults', resultDocId)
           .snapshots();
     });
   }
@@ -140,6 +144,7 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
   void _logout() async {
     await FirebaseAuth.instance.signOut();
     if (mounted) {
+      Provider.of<AppState>(context, listen: false).clearAll();
       Navigator.pushAndRemoveUntil(
         context,
         MaterialPageRoute(builder: (context) => const LoginScreen()),

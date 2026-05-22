@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:provider/provider.dart';
+import '../../providers/app_state.dart';
+import '../../services/firestore_helper.dart';
 import 'ia_questionwise_entry_screen.dart';
 
 /// Configuration screen for setting up question paper structure before
@@ -71,9 +74,9 @@ class _IAQuestionConfigScreenState extends State<IAQuestionConfigScreen> {
   Future<void> _checkExistingConfig() async {
     try {
       // Check the subject-level config doc
-      DocumentSnapshot configSnap = await FirebaseFirestore.instance
-          .collection('ia_configs')
-          .doc('${widget.subjectId}_${widget.iaFieldKey}')
+      final deptId = Provider.of<AppState>(context, listen: false).departmentId;
+      if (deptId == null) return;
+      DocumentSnapshot configSnap = await FirestoreHelper.deptDoc(deptId, 'ia_configs', '${widget.subjectId}_${widget.iaFieldKey}')
           .get();
 
       if (configSnap.exists && mounted) {
@@ -179,9 +182,9 @@ class _IAQuestionConfigScreenState extends State<IAQuestionConfigScreen> {
   Future<void> _saveConfigToFirestore(Map<String, dynamic> config) async {
     try {
       // Save only Firestore-safe fields (no nested arrays)
-      await FirebaseFirestore.instance
-          .collection('ia_configs')
-          .doc('${widget.subjectId}_${widget.iaFieldKey}')
+      final deptId = Provider.of<AppState>(context, listen: false).departmentId;
+      if (deptId == null) return;
+      await FirestoreHelper.deptDoc(deptId, 'ia_configs', '${widget.subjectId}_${widget.iaFieldKey}')
           .set({
         'numQuestions': config['numQuestions'],
         'numSubQuestions': config['numSubQuestions'],

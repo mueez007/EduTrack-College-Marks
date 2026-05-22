@@ -38,23 +38,27 @@ dependencies:
   # Charts (optional - for future analytics)
   fl_chart: ^0.68.0
 
+  # Google Fonts for professional typography
+  google_fonts: ^6.2.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^5.0.0
+  flutter_launcher_icons: ^0.14.3
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/logos/app_icon.png"
+  adaptive_icon_background: "#1A3C7A"
+  adaptive_icon_foreground: "assets/logos/app_icon.png"
 
 flutter:
   uses-material-design: true
   
-  # Optional: Add these if you have assets
-  # assets:
-  #   - assets/images/
-  #   - assets/icons/
-  
-  # Optional: Add fonts
-  # fonts:
-  #   - family: Inter
-  #     fonts:
-  #       - asset: assets/fonts/Inter-Regular.ttf
-  #       - asset: assets/fonts/Inter-Bold.ttf
-  #         weight: 700
+  assets:
+    - assets/logos/college_logo.png
+    - assets/logos/trust_logo.png
+    - assets/logos/aiml_logo.png
+    - assets/logos/app_icon.png

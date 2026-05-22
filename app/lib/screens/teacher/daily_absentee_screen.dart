@@ -10,6 +10,7 @@ import 'package:share_plus/share_plus.dart';
 import 'dart:io';
 
 import '../../providers/app_state.dart';
+import '../../services/firestore_helper.dart';
 
 class DailyAbsenteeScreen extends StatefulWidget {
   const DailyAbsenteeScreen({super.key});
@@ -56,8 +57,9 @@ class _DailyAbsenteeScreenState extends State<DailyAbsenteeScreen> {
 
     try {
       // 1. Load students for the batch
-      QuerySnapshot studentSnapshot = await FirebaseFirestore.instance
-          .collection('students')
+      final deptId = Provider.of<AppState>(context, listen: false).departmentId;
+      if (deptId == null) return;
+      QuerySnapshot studentSnapshot = await FirestoreHelper.deptCollection(deptId, 'students')
           .where('batchYear', isEqualTo: _selectedBatchId)
           .orderBy('name')
           .get();
@@ -72,8 +74,7 @@ class _DailyAbsenteeScreenState extends State<DailyAbsenteeScreen> {
       }).toList();
 
       // 2. Load subjects for the selected semester
-      QuerySnapshot subjectSnapshot = await FirebaseFirestore.instance
-          .collection('subjects')
+      QuerySnapshot subjectSnapshot = await FirestoreHelper.deptCollection(deptId, 'subjects')
           .where('batchYear', isEqualTo: _selectedBatchId)
           .where('semester', isEqualTo: _selectedSemester)
           .orderBy('subjectCode')
@@ -112,9 +113,9 @@ class _DailyAbsenteeScreenState extends State<DailyAbsenteeScreen> {
     final absenteeDocId = '${_selectedBatchId}_${_selectedSubjectId}_$dateStr';
 
     try {
-      DocumentSnapshot absenteeDoc = await FirebaseFirestore.instance
-          .collection('absentees')
-          .doc(absenteeDocId)
+      final deptId = Provider.of<AppState>(context, listen: false).departmentId;
+      if (deptId == null) return;
+      DocumentSnapshot absenteeDoc = await FirestoreHelper.deptDoc(deptId, 'absentees', absenteeDocId)
           .get();
 
       if (absenteeDoc.exists) {
@@ -169,9 +170,9 @@ class _DailyAbsenteeScreenState extends State<DailyAbsenteeScreen> {
         });
       }
 
-      await FirebaseFirestore.instance
-          .collection('absentees')
-          .doc(absenteeDocId)
+      final deptId = Provider.of<AppState>(context, listen: false).departmentId;
+      if (deptId == null) return;
+      await FirestoreHelper.deptDoc(deptId, 'absentees', absenteeDocId)
           .set({
         'batchYear': _selectedBatchId,
         'semester': _selectedSemester,
@@ -237,6 +238,8 @@ class _DailyAbsenteeScreenState extends State<DailyAbsenteeScreen> {
     }
 
     final subject = _subjects.firstWhere((s) => s.id == _selectedSubjectId);
+    final deptId = Provider.of<AppState>(context, listen: false).departmentId;
+    if (deptId == null) return;
     final WriteBatch batch = FirebaseFirestore.instance.batch();
     for (final student in _students) {
       final int absents = absentCounts[student.id] ?? 0;
@@ -246,9 +249,7 @@ class _DailyAbsenteeScreenState extends State<DailyAbsenteeScreen> {
       final String attendanceDocId =
           '${student.id}_${_selectedSubjectId}_S${_selectedSemester}_M$month'
           '_Y$year';
-      final docRef = FirebaseFirestore.instance
-          .collection('attendanceMonthly')
-          .doc(attendanceDocId);
+      final docRef = FirestoreHelper.deptDoc(deptId, 'attendanceMonthly', attendanceDocId);
       batch.set(docRef, {
         'studentId': student.id,
         'usn': student.usn,
@@ -325,8 +326,9 @@ class _DailyAbsenteeScreenState extends State<DailyAbsenteeScreen> {
 
     // Keep Firestore query index-free: filter by date range only, then apply
     // batch/semester/subject filters in Dart.
-    final QuerySnapshot snapshot = await FirebaseFirestore.instance
-        .collection('absentees')
+    final deptId = Provider.of<AppState>(context, listen: false).departmentId;
+    if (deptId == null) return [];
+    final QuerySnapshot snapshot = await FirestoreHelper.deptCollection(deptId, 'absentees')
         .where(
           'dateTimestamp',
           isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart),

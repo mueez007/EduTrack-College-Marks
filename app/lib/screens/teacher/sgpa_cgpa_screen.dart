@@ -8,6 +8,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
 import '../../providers/app_state.dart';
+import '../../services/firestore_helper.dart';
 import '../../services/results_calculation_service.dart';
 import '../../services/mark_calculation_service.dart';
 
@@ -86,8 +87,9 @@ class _SgpaCgpaScreenState extends State<SgpaCgpaScreen> {
 
     try {
       // 1. Get Subjects to find credits and max marks per subject
-      QuerySnapshot subjectSnapshot = await FirebaseFirestore.instance
-          .collection('subjects')
+      final deptId = Provider.of<AppState>(context, listen: false).departmentId;
+      if (deptId == null) return;
+      QuerySnapshot subjectSnapshot = await FirestoreHelper.deptCollection(deptId, 'subjects')
           .where('batchYear', isEqualTo: _selectedBatchId)
           .where('semester', isEqualTo: _selectedSemester)
           .get();
@@ -110,8 +112,7 @@ class _SgpaCgpaScreenState extends State<SgpaCgpaScreen> {
       }
       
       // 2. Get All Students in the batch
-      QuerySnapshot studentSnapshot = await FirebaseFirestore.instance
-          .collection('students')
+      QuerySnapshot studentSnapshot = await FirestoreHelper.deptCollection(deptId, 'students')
           .where('batchYear', isEqualTo: _selectedBatchId)
           .get();
           
@@ -127,9 +128,8 @@ class _SgpaCgpaScreenState extends State<SgpaCgpaScreen> {
         final name = studentData['name'] ?? 'No Name';
 
         // 3a. Get all final marks for this student/semester
-        QuerySnapshot finalMarksSnapshot = await FirebaseFirestore.instance
-            .collection('finalExamMarks')
-            .where('studentRef', isEqualTo: FirebaseFirestore.instance.doc('students/$studentId'))
+        QuerySnapshot finalMarksSnapshot = await FirestoreHelper.deptCollection(deptId, 'finalExamMarks')
+            .where('studentRef', isEqualTo: FirestoreHelper.deptDocRef(deptId, 'students', studentId))
             .where('semester', isEqualTo: _selectedSemester)
             .get();
         
@@ -163,9 +163,7 @@ class _SgpaCgpaScreenState extends State<SgpaCgpaScreen> {
           final iaMarkDocId = '${studentId}_$subId';
           double freshIaFinal = 0.0;
           try {
-            DocumentSnapshot iaMarkSnapshot = await FirebaseFirestore.instance
-                .collection('marks')
-                .doc(iaMarkDocId)
+            DocumentSnapshot iaMarkSnapshot = await FirestoreHelper.deptDoc(deptId, 'marks', iaMarkDocId)
                 .get();
             if (iaMarkSnapshot.exists) {
               final iaData = iaMarkSnapshot.data() as Map<String, dynamic>;
@@ -253,8 +251,7 @@ class _SgpaCgpaScreenState extends State<SgpaCgpaScreen> {
         // 3c. Fetch previous SGPAs for CGPA
         List<double> prevSgpas = [];
         if (_selectedSemester > 1) { 
-           QuerySnapshot prevResults = await FirebaseFirestore.instance
-                .collection('semesterResults')
+           QuerySnapshot prevResults = await FirestoreHelper.deptCollection(deptId, 'semesterResults')
                 .where('studentId', isEqualTo: studentId) 
                 .where('semester', isLessThan: _selectedSemester)
                 .get();
@@ -285,7 +282,7 @@ class _SgpaCgpaScreenState extends State<SgpaCgpaScreen> {
         totalCgpaSum += cgpa;
 
         // 3e. Save result to Firestore for persistence
-        await FirebaseFirestore.instance.collection('semesterResults').doc('${studentId}_S$_selectedSemester').set({
+        await FirestoreHelper.deptDoc(deptId, 'semesterResults', '${studentId}_S$_selectedSemester').set({
           'studentId': studentId,
           'name': name,
           'usn': usn,
@@ -311,7 +308,7 @@ class _SgpaCgpaScreenState extends State<SgpaCgpaScreen> {
       Map<String, dynamic> rankMap = {};
       for (var result in calculatedResults) {
           // Update individual semesterResults document with final rank
-          FirebaseFirestore.instance.collection('semesterResults').doc('${result.studentId}_S$_selectedSemester').update({
+          FirestoreHelper.deptDoc(deptId, 'semesterResults', '${result.studentId}_S$_selectedSemester').update({
               'rank': result.rank,
           });
           // Save rank and name to the public map (for student comparison)
@@ -320,7 +317,7 @@ class _SgpaCgpaScreenState extends State<SgpaCgpaScreen> {
       }
       
       // Save the single public document containing all rank data
-      await FirebaseFirestore.instance.collection('publicRanks').doc('S$_selectedSemester-$_selectedBatchId').set({
+      await FirestoreHelper.deptDoc(deptId, 'publicRanks', 'S$_selectedSemester-$_selectedBatchId').set({
           'rankList': rankMap,
           'lastUpdated': FieldValue.serverTimestamp(),
           'classAverageSGPA': _classAverageSgpa,

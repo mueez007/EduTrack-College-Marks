@@ -9,7 +9,8 @@ import 'package:pdf/widgets.dart' as pw; // Use prefix 'pw'
 import 'package:printing/printing.dart';
 
 import '../../providers/app_state.dart';
-import '../../services/mark_calculation_service.dart'; // For local total calculation
+import '../../services/firestore_helper.dart';
+import '../../services/mark_calculation_service.dart';
 
 // --- Models for Data Structure (Same as previous output) ---
 class StudentFinalMarkModel {
@@ -111,8 +112,9 @@ class _FinalExamMarksScreenState extends State<FinalExamMarksScreen> {
 
     try {
       // 1. Get Subjects for the selected semester and batch
-      QuerySnapshot subjectSnapshot = await FirebaseFirestore.instance
-          .collection('subjects')
+      final deptId = Provider.of<AppState>(context, listen: false).departmentId;
+      if (deptId == null) return;
+      QuerySnapshot subjectSnapshot = await FirestoreHelper.deptCollection(deptId, 'subjects')
           .where('batchYear', isEqualTo: _selectedBatchId)
           .where('semester', isEqualTo: _selectedSemester)
           .orderBy('subjectCode')
@@ -128,8 +130,7 @@ class _FinalExamMarksScreenState extends State<FinalExamMarksScreen> {
       }
 
       // 2. Get Students for the batch
-      QuerySnapshot studentSnapshot = await FirebaseFirestore.instance
-          .collection('students')
+      QuerySnapshot studentSnapshot = await FirestoreHelper.deptCollection(deptId, 'students')
           .where('batchYear', isEqualTo: _selectedBatchId)
           .orderBy('name')
           .get();
@@ -154,9 +155,7 @@ class _FinalExamMarksScreenState extends State<FinalExamMarksScreen> {
 
           // a) Get IA Final from 'marks' collection
           final iaMarkDocId = '${studentId}_$subjectId';
-          DocumentSnapshot iaMarkSnapshot = await FirebaseFirestore.instance
-              .collection('marks')
-              .doc(iaMarkDocId)
+          DocumentSnapshot iaMarkSnapshot = await FirestoreHelper.deptDoc(deptId, 'marks', iaMarkDocId)
               .get();
           double? iaFinalMark =
               (iaMarkSnapshot.exists
@@ -168,9 +167,7 @@ class _FinalExamMarksScreenState extends State<FinalExamMarksScreen> {
 
           // b) Get Exam Final from 'finalExamMarks' collection
           final finalMarkDocId = '${studentId}_$subjectId';
-          DocumentSnapshot finalMarkSnapshot = await FirebaseFirestore.instance
-              .collection('finalExamMarks')
-              .doc(finalMarkDocId)
+          DocumentSnapshot finalMarkSnapshot = await FirestoreHelper.deptDoc(deptId, 'finalExamMarks', finalMarkDocId)
               .get();
           int? examFinalMark = finalMarkSnapshot.exists
               ? (finalMarkSnapshot.data() as Map<String, dynamic>)['examFinal']
@@ -195,9 +192,7 @@ class _FinalExamMarksScreenState extends State<FinalExamMarksScreen> {
             // Fix if iaFinal is missing/wrong OR calculated_total is wrong
             if (existingIaFinal != iaFinalMark || existingTotal != calculatedTotalMark) {
               // Fire-and-forget update to fix stale data
-              FirebaseFirestore.instance
-                  .collection('finalExamMarks')
-                  .doc(finalMarkDocId)
+              FirestoreHelper.deptDoc(deptId, 'finalExamMarks', finalMarkDocId)
                   .update({
                 'iaFinal': iaFinalMark,
                 'calculated_total': calculatedTotalMark,
@@ -273,14 +268,15 @@ class _FinalExamMarksScreenState extends State<FinalExamMarksScreen> {
     }
 
     try {
+      final deptId = Provider.of<AppState>(context, listen: false).departmentId;
+      if (deptId == null) return;
+
       // Re-fetch the latest iaFinal from the marks collection
       // This ensures we always use the correct value even if IA marks were updated
       double? latestIaFinal = subjectData.iaFinal;
       final iaMarkDocId = '${studentModel.studentId}_$subjectId';
       try {
-        DocumentSnapshot iaMarkSnapshot = await FirebaseFirestore.instance
-            .collection('marks')
-            .doc(iaMarkDocId)
+        DocumentSnapshot iaMarkSnapshot = await FirestoreHelper.deptDoc(deptId, 'marks', iaMarkDocId)
             .get();
         if (iaMarkSnapshot.exists) {
           final iaMarkData = iaMarkSnapshot.data() as Map<String, dynamic>;
@@ -310,17 +306,17 @@ class _FinalExamMarksScreenState extends State<FinalExamMarksScreen> {
 
         // -----------------------------
         'batchYear': _selectedBatchId,
-        'studentRef': FirebaseFirestore.instance.doc(
-          'students/${studentModel.studentId}',
+        'studentRef': FirestoreHelper.deptDocRef(
+          deptId,
+          'students',
+          studentModel.studentId,
         ),
-        'subjectRef': FirebaseFirestore.instance.doc('subjects/$subjectId'),
+        'subjectRef': FirestoreHelper.deptDocRef(deptId, 'subjects', subjectId),
         'lastUpdated': FieldValue.serverTimestamp(),
       };
 
       // Save to Firestore
-      await FirebaseFirestore.instance
-          .collection('finalExamMarks')
-          .doc(subjectData.markDocId)
+      await FirestoreHelper.deptDoc(deptId, 'finalExamMarks', subjectData.markDocId)
           .set(dataToSave, SetOptions(merge: true));
 
       // Update local state for immediate UI feedback

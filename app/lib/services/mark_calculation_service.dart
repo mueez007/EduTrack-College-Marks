@@ -38,7 +38,7 @@ class MarkCalculationService {
         finalInternalTotal = (roundedReducedIA + projAssignMarks).toDouble();
         break;
 
-      case "BEST_2_OF_3_AVG": // IAs (25) -> 15 + Assign (10) + Lab (25) = 50
+      case "BEST_2_OF_3_AVG": // IAs (25) -> 15 + Assign (10) + Lab (15) = 40
         final internals = [ia1 ?? 0, ia2 ?? 0, ia3 ?? 0];
         internals.sort((a, b) => b - a); 
         final double best2Avg = (internals[0] + internals[1]) / 2.0;

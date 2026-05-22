@@ -9,6 +9,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
 import '../../providers/app_state.dart';
+import '../../services/firestore_helper.dart';
 import '../../models/student_mark_model.dart';
 import '../../services/mark_calculation_service.dart';
 import 'ia_question_config_screen.dart';
@@ -75,8 +76,9 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
     if (_selectedBatchId == null) return;
     try {
       // Just check if any ia_details doc exists for this subject
-      QuerySnapshot studentSnapshot = await FirebaseFirestore.instance
-          .collection('students')
+      final deptId = Provider.of<AppState>(context, listen: false).departmentId;
+      if (deptId == null) return;
+      QuerySnapshot studentSnapshot = await FirestoreHelper.deptCollection(deptId, 'students')
           .where('batchYear', isEqualTo: _selectedBatchId)
           .limit(1)
           .get();
@@ -84,9 +86,7 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
 
       final firstStudentId = studentSnapshot.docs.first.id;
       final detailDocId = '${firstStudentId}_${widget.subjectId}';
-      DocumentSnapshot detailSnap = await FirebaseFirestore.instance
-          .collection('ia_details')
-          .doc(detailDocId)
+      DocumentSnapshot detailSnap = await FirestoreHelper.deptDoc(deptId, 'ia_details', detailDocId)
           .get();
 
       if (detailSnap.exists && mounted) {
@@ -191,8 +191,9 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
 
     setState(() => _isLoading = true);
     try {
-      QuerySnapshot studentSnapshot = await FirebaseFirestore.instance
-          .collection('students')
+      final deptId = Provider.of<AppState>(context, listen: false).departmentId;
+      if (deptId == null) return;
+      QuerySnapshot studentSnapshot = await FirestoreHelper.deptCollection(deptId, 'students')
           .where('batchYear', isEqualTo: _selectedBatchId)
           .orderBy('name')
           .get();
@@ -206,9 +207,7 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
         final studentName = studentData['name'] ?? 'No Name';
         final markDocId = '${studentId}_${widget.subjectId}';
 
-        DocumentSnapshot markSnapshot = await FirebaseFirestore.instance
-            .collection('marks')
-            .doc(markDocId)
+        DocumentSnapshot markSnapshot = await FirestoreHelper.deptDoc(deptId, 'marks', markDocId)
             .get();
 
         Map<String, dynamic>? markData = markSnapshot.exists
@@ -341,19 +340,22 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
 
         // -----------------------------
         'batchYear': _selectedBatchId,
-        'studentRef': FirebaseFirestore.instance.doc(
-          'students/${studentMark.studentId}',
+        'studentRef': FirestoreHelper.deptDocRef(
+          Provider.of<AppState>(context, listen: false).departmentId!,
+          'students',
+          studentMark.studentId,
         ),
-        'subjectRef': FirebaseFirestore.instance.doc(
-          'subjects/${widget.subjectId}',
+        'subjectRef': FirestoreHelper.deptDocRef(
+          Provider.of<AppState>(context, listen: false).departmentId!,
+          'subjects',
+          widget.subjectId,
         ),
         'lastUpdated': FieldValue.serverTimestamp(),
       };
 
       // Save to Firestore
-      await FirebaseFirestore.instance
-          .collection('marks')
-          .doc(studentMark.markDocId)
+      final deptId = Provider.of<AppState>(context, listen: false).departmentId!;
+      await FirestoreHelper.deptDoc(deptId, 'marks', studentMark.markDocId)
           .set(dataToSave, SetOptions(merge: true));
 
       // Update local state and recalculate averages immediately

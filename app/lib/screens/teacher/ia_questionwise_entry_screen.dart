@@ -1,12 +1,15 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:provider/provider.dart';
 
 // PDF
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
+import '../../providers/app_state.dart';
+import '../../services/firestore_helper.dart';
 import '../../services/mark_calculation_service.dart';
 import 'ia_question_config_screen.dart';
 
@@ -118,8 +121,9 @@ class _IAQuestionwiseEntryScreenState extends State<IAQuestionwiseEntryScreen> {
   Future<void> _loadStudents() async {
     setState(() => _isLoading = true);
     try {
-      QuerySnapshot studentSnapshot = await FirebaseFirestore.instance
-          .collection('students')
+      final deptId = Provider.of<AppState>(context, listen: false).departmentId;
+      if (deptId == null) return;
+      QuerySnapshot studentSnapshot = await FirestoreHelper.deptCollection(deptId, 'students')
           .where('batchYear', isEqualTo: widget.batchId)
           .orderBy('name')
           .get();
@@ -134,9 +138,7 @@ class _IAQuestionwiseEntryScreenState extends State<IAQuestionwiseEntryScreen> {
 
         // Check for existing detailed marks
         final detailDocId = '${studentId}_${widget.subjectId}';
-        DocumentSnapshot detailSnapshot = await FirebaseFirestore.instance
-            .collection('ia_details')
-            .doc(detailDocId)
+        DocumentSnapshot detailSnapshot = await FirestoreHelper.deptDoc(deptId, 'ia_details', detailDocId)
             .get();
 
         Map<String, dynamic>? existingMarks;
@@ -243,9 +245,9 @@ class _IAQuestionwiseEntryScreenState extends State<IAQuestionwiseEntryScreen> {
 
     try {
       // Save detailed marks to ia_details — flat structure, no nested arrays
-      await FirebaseFirestore.instance
-          .collection('ia_details')
-          .doc(detailDocId)
+      final deptId = Provider.of<AppState>(context, listen: false).departmentId;
+      if (deptId == null) return;
+      await FirestoreHelper.deptDoc(deptId, 'ia_details', detailDocId)
           .set({
         widget.iaFieldKey: {
           'numQuestions': _numQuestions,
@@ -261,9 +263,7 @@ class _IAQuestionwiseEntryScreenState extends State<IAQuestionwiseEntryScreen> {
       final markDocId = '${student.studentId}_${widget.subjectId}';
 
       // First read existing marks to recalculate IA final
-      DocumentSnapshot existingMarkSnap = await FirebaseFirestore.instance
-          .collection('marks')
-          .doc(markDocId)
+      DocumentSnapshot existingMarkSnap = await FirestoreHelper.deptDoc(deptId, 'marks', markDocId)
           .get();
 
       Map<String, dynamic> existingData = existingMarkSnap.exists
@@ -287,15 +287,13 @@ class _IAQuestionwiseEntryScreenState extends State<IAQuestionwiseEntryScreen> {
         subjectData: widget.subjectData,
       );
 
-      await FirebaseFirestore.instance
-          .collection('marks')
-          .doc(markDocId)
+      await FirestoreHelper.deptDoc(deptId, 'marks', markDocId)
           .set({
         widget.iaFieldKey: calculatedTotal,
         'calculated_iaFinal': calculatedFinal,
         'batchYear': widget.batchId,
-        'studentRef': FirebaseFirestore.instance.doc('students/${student.studentId}'),
-        'subjectRef': FirebaseFirestore.instance.doc('subjects/${widget.subjectId}'),
+        'studentRef': FirestoreHelper.deptDocRef(deptId, 'students', student.studentId),
+        'subjectRef': FirestoreHelper.deptDocRef(deptId, 'subjects', widget.subjectId),
         'lastUpdated': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
     } catch (e) {
@@ -399,9 +397,9 @@ class _IAQuestionwiseEntryScreenState extends State<IAQuestionwiseEntryScreen> {
 
     // Delete the saved config from Firestore
     try {
-      await FirebaseFirestore.instance
-          .collection('ia_configs')
-          .doc('${widget.subjectId}_${widget.iaFieldKey}')
+      final deptId = Provider.of<AppState>(context, listen: false).departmentId;
+      if (deptId == null) return;
+      await FirestoreHelper.deptDoc(deptId, 'ia_configs', '${widget.subjectId}_${widget.iaFieldKey}')
           .delete();
     } catch (e) {
       print('Error deleting config: $e');

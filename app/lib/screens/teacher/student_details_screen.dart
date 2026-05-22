@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../../providers/app_state.dart';
+import '../../services/firestore_helper.dart';
 
 class StudentDetailsScreen extends StatefulWidget {
   const StudentDetailsScreen({super.key});
@@ -24,11 +25,13 @@ class _StudentDetailsScreenState extends State<StudentDetailsScreen> {
     ).selectedBatchId;
 
     if (_selectedBatchId != null) {
-      _studentsStream = FirebaseFirestore.instance
-          .collection('students')
-          .where('batchYear', isEqualTo: _selectedBatchId)
-          .orderBy('name')
-          .snapshots();
+      final deptId = Provider.of<AppState>(context, listen: false).departmentId;
+      if (deptId != null) {
+        _studentsStream = FirestoreHelper.deptCollection(deptId, 'students')
+            .where('batchYear', isEqualTo: _selectedBatchId)
+            .orderBy('name')
+            .snapshots();
+      }
     } else {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
@@ -183,9 +186,9 @@ class _StudentDetailsScreenState extends State<StudentDetailsScreen> {
 
     try {
       // 1. CREATE STUDENT DOCUMENT in Firestore
-      DocumentReference studentRef = FirebaseFirestore.instance
-          .collection('students')
-          .doc('${currentBatchId}_$usn');
+      final deptId = Provider.of<AppState>(context, listen: false).departmentId;
+      if (deptId == null) throw Exception('Department not selected.');
+      DocumentReference studentRef = FirestoreHelper.deptDoc(deptId, 'students', '${currentBatchId}_$usn');
 
       // 2. Check for Duplicates
       DocumentSnapshot docSnapshot = await studentRef.get();
@@ -291,10 +294,10 @@ class _StudentDetailsScreenState extends State<StudentDetailsScreen> {
                           final name = parts[1];
                           final number = parts.length > 2 ? parts[2] : '';
 
+                          final deptId = Provider.of<AppState>(context, listen: false).departmentId;
+                          if (deptId == null) continue;
                           try {
-                            await FirebaseFirestore.instance
-                                .collection('students')
-                                .doc('${currentBatchId}_$usn')
+                            await FirestoreHelper.deptDoc(deptId, 'students', '${currentBatchId}_$usn')
                                 .set({
                                   'name': name,
                                   'usn': usn,
@@ -541,29 +544,28 @@ class _StudentDetailsScreenState extends State<StudentDetailsScreen> {
                   onPressed: isDeleting ? null : () async {
                     setDialogState(() => isDeleting = true);
                     try {
+                      final deptId = Provider.of<AppState>(context, listen: false).departmentId;
+                      if (deptId == null) throw Exception('No department selected');
                       final batch = FirebaseFirestore.instance.batch();
                       
                       // Delete from marks collection
-                      final marksSnap = await FirebaseFirestore.instance
-                          .collection('marks')
-                          .where('studentRef', isEqualTo: FirebaseFirestore.instance.doc('students/$studentDocId'))
+                      final marksSnap = await FirestoreHelper.deptCollection(deptId, 'marks')
+                          .where('studentRef', isEqualTo: FirestoreHelper.deptDocRef(deptId, 'students', studentDocId))
                           .get();
                       for (var doc in marksSnap.docs) {
                         batch.delete(doc.reference);
                       }
 
                       // Delete from finalExamMarks collection
-                      final finalMarksSnap = await FirebaseFirestore.instance
-                          .collection('finalExamMarks')
-                          .where('studentRef', isEqualTo: FirebaseFirestore.instance.doc('students/$studentDocId'))
+                      final finalMarksSnap = await FirestoreHelper.deptCollection(deptId, 'finalExamMarks')
+                          .where('studentRef', isEqualTo: FirestoreHelper.deptDocRef(deptId, 'students', studentDocId))
                           .get();
                       for (var doc in finalMarksSnap.docs) {
                         batch.delete(doc.reference);
                       }
 
                       // Delete from semesterResults collection
-                      final resultsSnap = await FirebaseFirestore.instance
-                          .collection('semesterResults')
+                      final resultsSnap = await FirestoreHelper.deptCollection(deptId, 'semesterResults')
                           .where('studentId', isEqualTo: studentDocId)
                           .get();
                       for (var doc in resultsSnap.docs) {
@@ -571,7 +573,7 @@ class _StudentDetailsScreenState extends State<StudentDetailsScreen> {
                       }
 
                       // Delete the student document itself
-                      batch.delete(FirebaseFirestore.instance.collection('students').doc(studentDocId));
+                      batch.delete(FirestoreHelper.deptDoc(deptId, 'students', studentDocId));
 
                       await batch.commit();
 
@@ -655,9 +657,9 @@ class _StudentDetailsScreenState extends State<StudentDetailsScreen> {
           ElevatedButton(
             onPressed: () async {
               try {
-                await FirebaseFirestore.instance
-                    .collection('students')
-                    .doc(studentId)
+                final deptId = Provider.of<AppState>(context, listen: false).departmentId;
+                if (deptId == null) throw Exception('No department');
+                await FirestoreHelper.deptDoc(deptId, 'students', studentId)
                     .update({
                       'name': nameController.text.trim(),
                       'number': numberController.text.trim().isEmpty

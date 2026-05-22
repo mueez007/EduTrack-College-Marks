@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:provider/provider.dart';
 
+import '../../providers/app_state.dart';
+import '../../services/firestore_helper.dart';
 import '../../services/mark_calculation_service.dart';
 
 class StudentSubjectViewScreen extends StatefulWidget {
@@ -51,10 +54,10 @@ class _StudentSubjectViewScreenState extends State<StudentSubjectViewScreen> {
     final markDocId = '${widget.studentId}_${widget.subjectId}';
     
     try {
+      final deptId = Provider.of<AppState>(context, listen: false).departmentId;
+      if (deptId == null) return;
       // 1. Fetch raw IA marks from 'marks' collection (source of truth for IA)
-      DocumentSnapshot iaMarkSnapshot = await FirebaseFirestore.instance
-          .collection('marks')
-          .doc(markDocId)
+      DocumentSnapshot iaMarkSnapshot = await FirestoreHelper.deptDoc(deptId, 'marks', markDocId)
           .get();
       
       double? calculatedIaFinal;
@@ -79,9 +82,7 @@ class _StudentSubjectViewScreenState extends State<StudentSubjectViewScreen> {
       _iaFinal = calculatedIaFinal ?? 0.0;
       
       // 2. Fetch final exam marks from 'finalExamMarks' collection
-      DocumentSnapshot finalMarkSnapshot = await FirebaseFirestore.instance
-          .collection('finalExamMarks')
-          .doc(markDocId)
+      DocumentSnapshot finalMarkSnapshot = await FirestoreHelper.deptDoc(deptId, 'finalExamMarks', markDocId)
           .get();
       
       if (finalMarkSnapshot.exists) {
@@ -103,9 +104,7 @@ class _StudentSubjectViewScreenState extends State<StudentSubjectViewScreen> {
         
         if ((storedIaFinal - _iaFinal).abs() > 0.01 || (storedTotal - _subjectTotal).abs() > 0.01) {
           // Fix the stale data in Firestore
-          FirebaseFirestore.instance
-              .collection('finalExamMarks')
-              .doc(markDocId)
+              FirestoreHelper.deptDoc(deptId, 'finalExamMarks', markDocId)
               .update({
             'iaFinal': _iaFinal,
             'calculated_total': _subjectTotal,
@@ -118,9 +117,7 @@ class _StudentSubjectViewScreenState extends State<StudentSubjectViewScreen> {
       final int semester = widget.subjectData['semester'] as int? ?? 1;
       final String batchId = widget.subjectData['batchYear'] as String? ?? 'N/A';
       
-      DocumentSnapshot rankSnapshot = await FirebaseFirestore.instance
-          .collection('publicRanks')
-          .doc('S$semester-$batchId')
+      DocumentSnapshot rankSnapshot = await FirestoreHelper.deptDoc(deptId, 'publicRanks', 'S$semester-$batchId')
           .get();
       
       if (rankSnapshot.exists) {
@@ -183,7 +180,7 @@ class _StudentSubjectViewScreenState extends State<StudentSubjectViewScreen> {
       case 'SEM_SPECIAL_100_MARK_SCHEMA': // reduced IA (25) + project (25) = 50
         maxInternalTotal = 50;
         break;
-      case 'BEST_2_OF_3_AVG':         // reduced IA (15) + assignment (10) + lab (25) = 50
+      case 'BEST_2_OF_3_AVG':         // reduced IA (15) + assignment (10) + lab (15) = 40
         maxInternalTotal = widget.subjectData['maxInternalTotal'] ?? 50;
         break;
       default:

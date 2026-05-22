@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../providers/app_state.dart'; 
+import '../../services/firestore_helper.dart';
 import 'marks_entry_screen.dart'; 
 
 class SubjectsScreen extends StatefulWidget {
@@ -20,13 +21,12 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
   final Map<String, String> _iaRuleOptions = {
     'SEM_5_6_SCHEMA': 'Best 2/3 (40) + Proj/Assign (25) -> 50 IA Total', 
     'SEM_SPECIAL_100_MARK_SCHEMA': 'Best 2/3 (30) to 25 + Proj (25) -> 50 IA Total (Special Subject)', 
-    'BEST_2_OF_3_AVG': 'Best 2/3 (25) + Assign (10) + Lab (25) -> 50 IA Total',
+    'BEST_2_OF_3_AVG': 'Best 2/3 (25) + Assign (10) + Lab (15) -> 40 IA Total',
   };
 
    final Map<String, String> _finalExamRuleOptions = {
     'HUNDRED_REDUCED_TO_FIFTY': 'Exam (100)/2 + IA (50)', 
     'FIFTY_FIFTY_RAW': 'Exam (50) + IA (50)', 
-    'THIRTY_THIRTY_RAW': 'Exam (Scaled to 15) + IA (15) [Total 30]',
   };
   // --- End of Maps ---
 
@@ -38,10 +38,10 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
   }
 
   void _loadSubjects() {
-    if (_selectedBatchId != null) {
+    final deptId = Provider.of<AppState>(context, listen: false).departmentId;
+    if (_selectedBatchId != null && deptId != null) {
       setState(() {
-        _subjectsStream = FirebaseFirestore.instance
-            .collection('subjects')
+        _subjectsStream = FirestoreHelper.deptCollection(deptId, 'subjects')
             .where('batchYear', isEqualTo: _selectedBatchId)
             .where('semester', isEqualTo: _selectedSemester) 
             .orderBy('subjectCode') 
@@ -181,7 +181,9 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
                     }
 
                     try {
-                      DocumentReference subjectRef = FirebaseFirestore.instance.collection('subjects').doc('${currentBatchId}_S${_selectedSemester}_$code');
+                      final deptId = Provider.of<AppState>(context, listen: false).departmentId;
+                      if (deptId == null) return;
+                      DocumentReference subjectRef = FirestoreHelper.deptDoc(deptId, 'subjects', '${currentBatchId}_S${_selectedSemester}_$code');
                       final docSnapshot = await subjectRef.get();
                       if (docSnapshot.exists) {
                          setDialogState(() => isSaving = false);
@@ -211,8 +213,7 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
                       } else if (iaRule == 'BEST_2_OF_3_AVG') {
                           baseInternalMax = 25; 
                           maxAssignment = 10;
-                          maxLab = 25;
-                          // maxInternalTotal = 15; // Set this manually if IA is reduced to 15
+                          maxLab = 15;
                       }
                       
                       // Logic based on Final Exam Rule (overrides total if 30-mark subject)
@@ -398,7 +399,7 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
                       } else if (iaRule == 'BEST_2_OF_3_AVG') {
                         baseInternalMax = 25;
                         maxAssignment = 10;
-                        maxLab = 25;
+                        maxLab = 15;
                       }
 
                       if (finalExamRule == 'HUNDRED_REDUCED_TO_FIFTY') {
@@ -415,7 +416,9 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
                       }
 
                       try {
-                        await FirebaseFirestore.instance.collection('subjects').doc(subjectDocId).update({
+                        final deptId = Provider.of<AppState>(context, listen: false).departmentId;
+                        if (deptId == null) return;
+                        await FirestoreHelper.deptDoc(deptId, 'subjects', subjectDocId).update({
                           'subjectName': name,
                           'credits': credits,
                           'iaCalculationRule': iaRule,
@@ -489,7 +492,9 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
               style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
               onPressed: () async {
                 try {
-                  await FirebaseFirestore.instance.collection('subjects').doc(subjectDocId).delete();
+                  final deptId = Provider.of<AppState>(context, listen: false).departmentId;
+                  if (deptId == null) return;
+                  await FirestoreHelper.deptDoc(deptId, 'subjects', subjectDocId).delete();
                   if (!dialogContext.mounted) return;
                   Navigator.of(dialogContext).pop();
                   if (mounted) {

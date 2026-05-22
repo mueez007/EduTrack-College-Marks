@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:provider/provider.dart';
+
+import '../../providers/app_state.dart';
+import '../../services/firestore_helper.dart';
 
 /// Screen showing subject-wise attendance for a student.
 /// Reads from the `attendanceMonthly` collection which is updated
@@ -38,9 +42,10 @@ class _StudentAttendanceScreenState extends State<StudentAttendanceScreen> {
     setState(() => _isLoading = true);
 
     try {
+      final deptId = Provider.of<AppState>(context, listen: false).departmentId;
+      if (deptId == null) return;
       // First load all subjects for this semester
-      QuerySnapshot subjectSnap = await FirebaseFirestore.instance
-          .collection('subjects')
+      QuerySnapshot subjectSnap = await FirestoreHelper.deptCollection(deptId, 'subjects')
           .where('batchYear', isEqualTo: widget.batchId)
           .where('semester', isEqualTo: widget.semester)
           .orderBy('subjectCode')
@@ -57,8 +62,7 @@ class _StudentAttendanceScreenState extends State<StudentAttendanceScreen> {
         final subjectId = subDoc.id;
 
         // Query all monthly records for this student + subject
-        QuerySnapshot monthlySnap = await FirebaseFirestore.instance
-            .collection('attendanceMonthly')
+        QuerySnapshot monthlySnap = await FirestoreHelper.deptCollection(deptId, 'attendanceMonthly')
             .where('studentId', isEqualTo: widget.studentId)
             .where('subjectId', isEqualTo: subjectId)
             .where('semester', isEqualTo: widget.semester)
