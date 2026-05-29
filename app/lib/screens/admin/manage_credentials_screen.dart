@@ -146,10 +146,7 @@ class _ManageCredentialsScreenState extends State<ManageCredentialsScreen> {
                               return;
                             }
 
-                            // Save current admin user to re-authenticate later
-                            final adminUser = FirebaseAuth.instance.currentUser;
-
-                            // Create Firebase Auth account
+                            // Create Firebase Auth account for the teacher
                             String? newUid;
                             try {
                               final userCredential = await FirebaseAuth.instance
@@ -159,7 +156,13 @@ class _ManageCredentialsScreenState extends State<ManageCredentialsScreen> {
                               );
                               newUid = userCredential.user!.uid;
 
-                              // Create the users doc with faculty role (root-level for auth)
+                              // Sign out the newly created user immediately
+                              await FirebaseAuth.instance.signOut();
+
+                              // Re-authenticate as admin (anonymous) BEFORE writing docs
+                              await FirebaseAuth.instance.signInAnonymously();
+
+                              // NOW write the users doc with faculty role (as admin)
                               await FirebaseFirestore.instance
                                   .collection('users')
                                   .doc(newUid)
@@ -169,16 +172,10 @@ class _ManageCredentialsScreenState extends State<ManageCredentialsScreen> {
                                 'departmentId': _selectedDepartmentId,
                                 'createdAt': FieldValue.serverTimestamp(),
                               });
-
-                              // Sign out the newly created user
-                              await FirebaseAuth.instance.signOut();
-
-                              // Re-authenticate as admin (anonymous)
-                              await FirebaseAuth.instance.signInAnonymously();
                             } on FirebaseAuthException catch (authErr) {
                               if (authErr.code == 'email-already-in-use') {
                                 // Account exists — just add to department mapping
-                                print('Auth account already exists for $email, adding department mapping only.');
+                                debugPrint('Auth account already exists for $email, adding department mapping only.');
                                 // Re-sign in as admin if we got signed out
                                 if (FirebaseAuth.instance.currentUser == null) {
                                   await FirebaseAuth.instance.signInAnonymously();

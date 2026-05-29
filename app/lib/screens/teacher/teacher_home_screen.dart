@@ -29,7 +29,7 @@ class TeacherHomeScreen extends StatelessWidget {
         (Route<dynamic> route) => false,
       );
     } catch (e) {
-      print("Error logging out: $e");
+      debugPrint("Error logging out: $e");
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Logout failed: $e'), backgroundColor: Colors.red),

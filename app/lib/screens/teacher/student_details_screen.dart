@@ -219,7 +219,7 @@ class _StudentDetailsScreenState extends State<StudentDetailsScreen> {
       );
     } catch (e) {
       resetIsSaving();
-      print("Error adding student: $e");
+      debugPrint("Error adding student: $e");
       ScaffoldMessenger.of(dialogContext).showSnackBar(
         SnackBar(
           content: Text('Failed to add student. Error: ${e.toString()}'),

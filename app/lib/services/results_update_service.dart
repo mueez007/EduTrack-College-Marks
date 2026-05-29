@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'firestore_helper.dart';
 import 'results_calculation_service.dart';
@@ -16,12 +18,16 @@ class ResultsUpdateService {
   final MarkCalculationService _markCalc = MarkCalculationService();
 
   /// Truncate a double to specific decimal places (VTU truncation rule)
+  /// Includes epsilon correction for floating-point precision issues
+  /// (e.g., 9.9999999999 due to int division should become 10.0, not 9.99)
   double _truncateToDecimal(double value, int fractionDigits) {
+    const double epsilon = 1e-9;
+    final double corrected = value + epsilon;
     int factor = 1;
     for (int i = 0; i < fractionDigits; i++) {
       factor *= 10;
     }
-    return (value * factor).floor() / factor;
+    return (corrected * factor).floor() / factor;
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -44,7 +50,7 @@ class ResultsUpdateService {
       if (!studentDoc.exists) return;
       final studentData = studentDoc.data() as Map<String, dynamic>;
 
-      // 2. Fetch all subjects for this semester (for credits and maxSubjectTotal)
+      // 2. Fetch all subjects for this semester (for credits, maxSubjectTotal, and calculation rules)
       final subjectsSnapshot = await FirestoreHelper.deptCollection(deptId, 'subjects')
           .where('batchYear', isEqualTo: batchYear)
           .where('semester', isEqualTo: semester)
@@ -56,6 +62,7 @@ class ResultsUpdateService {
         subjectInfoMap[subDoc.reference.path] = {
           'credits': subData['credits'] ?? 0,
           'maxSubjectTotal': subData['maxSubjectTotal'] ?? 100,
+          'subjectData': subData,
         };
       }
 
@@ -66,26 +73,78 @@ class ResultsUpdateService {
           .where('semester', isEqualTo: semester)
           .get();
 
-      // 4. Calculate SGPA
+      // 3b. Fetch all internal marks for this student + semester (for latest iaFinal)
+      final internalMarksSnapshot = await FirestoreHelper.deptCollection(deptId, 'marks')
+          .where('studentRef', isEqualTo: studentRef)
+          .where('semester', isEqualTo: semester)
+          .get();
+
+      // Index internal marks by doc ID for O(1) lookup
+      final Map<String, Map<String, dynamic>> internalMarksMap = {};
+      for (final doc in internalMarksSnapshot.docs) {
+        internalMarksMap[doc.id] = doc.data() as Map<String, dynamic>;
+      }
+
+      // 4. Calculate SGPA — always recalculate from source-of-truth data
       int totalMarksObtained = 0;
       double sumCreditGradeProduct = 0;
       int sumCredits = 0;
 
       for (final doc in marksSnapshot.docs) {
         final markData = doc.data() as Map<String, dynamic>;
-        final double calculatedTotal = (markData['calculated_total'] as num?)?.toDouble() ?? 0.0;
-        totalMarksObtained += calculatedTotal.round();
+        final examFinal = (markData['examFinal'] as num?)?.toInt();
+
+        // Skip subjects where no exam marks have been entered
+        if (examFinal == null) continue;
 
         int credits = 0;
         int maxSubjectTotal = 100;
+        Map<String, dynamic>? subjectData;
 
         if (markData['subjectRef'] != null) {
           final subjectPath = (markData['subjectRef'] as DocumentReference).path;
           if (subjectInfoMap.containsKey(subjectPath)) {
             credits = subjectInfoMap[subjectPath]!['credits'] as int;
             maxSubjectTotal = subjectInfoMap[subjectPath]!['maxSubjectTotal'] as int;
+            subjectData = subjectInfoMap[subjectPath]!['subjectData'] as Map<String, dynamic>;
           }
         }
+
+        // Skip 0-credit subjects from SGPA calculation
+        if (credits <= 0) continue;
+
+        // Get latest iaFinal from the marks (internal marks) collection
+        // This is the source of truth, NOT the iaFinal stored in finalExamMarks
+        final internalMarkData = internalMarksMap[doc.id];
+        double latestIaFinal = (markData['iaFinal'] as num?)?.toDouble() ?? 0.0;
+        if (internalMarkData != null) {
+          latestIaFinal = (internalMarkData['calculated_iaFinal'] as num?)?.toDouble() ?? latestIaFinal;
+        }
+
+        // Always recalculate total from scratch using latest values
+        double calculatedTotal;
+        if (subjectData != null) {
+          calculatedTotal = _markCalc.calculateTotalMarksLocal(
+            iaFinal: latestIaFinal,
+            examFinal: examFinal,
+            subjectData: subjectData,
+          );
+        } else {
+          // Fallback: use stored calculated_total if subject data unavailable
+          calculatedTotal = (markData['calculated_total'] as num?)?.toDouble() ?? 0.0;
+        }
+
+        // Auto-repair: update stale values in Firestore
+        final storedTotal = (markData['calculated_total'] as num?)?.toDouble();
+        final storedIaFinal = (markData['iaFinal'] as num?)?.toDouble();
+        if (storedTotal != calculatedTotal || storedIaFinal != latestIaFinal) {
+          FirestoreHelper.deptDoc(deptId, 'finalExamMarks', doc.id).update({
+            'iaFinal': latestIaFinal,
+            'calculated_total': calculatedTotal,
+          });
+        }
+
+        totalMarksObtained += calculatedTotal.round();
 
         double scaledMarks = calculatedTotal;
         if (maxSubjectTotal != 100 && maxSubjectTotal > 0) {
@@ -157,8 +216,11 @@ class ResultsUpdateService {
           'lastCalculated': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
       }
+
+      // 7. Recalculate and update ranks for all students in this batch + semester
+      await _recalculateAndWriteRanks(deptId: deptId, batchYear: batchYear, semester: semester);
     } catch (e) {
-      print('[ResultsUpdateService] Error recalculating student $studentId semester $semester: $e');
+      debugPrint('[ResultsUpdateService] Error recalculating student $studentId semester $semester: $e');
     }
   }
 
@@ -256,41 +318,61 @@ class ResultsUpdateService {
         int sumCredits = 0;
 
         for (final markData in studentFinalMarks) {
-          double? calculatedTotal = (markData['calculated_total'] as num?)?.toDouble();
+          final examFinal = (markData['examFinal'] as num?)?.toInt();
 
-          // AUTO-REPAIR: If calculated_total is missing but we have iaFinal + examFinal, compute it
-          if (calculatedTotal == null &&
-              markData['examFinal'] != null &&
-              markData['subjectRef'] != null) {
-            final subjectPath = (markData['subjectRef'] as DocumentReference).path;
-            final subInfo = subjectInfoMap[subjectPath];
-            if (subInfo != null) {
-              final iaFinal = (markData['iaFinal'] as num?)?.toDouble() ?? 0.0;
-              final examFinal = (markData['examFinal'] as num?)?.toInt() ?? 0;
-              calculatedTotal = _markCalc.calculateTotalMarksLocal(
-                iaFinal: iaFinal,
-                examFinal: examFinal,
-                subjectData: subInfo['subjectData'] as Map<String, dynamic>,
-              );
-              // Stage repair write
-              final repairRef = FirestoreHelper.deptDoc(deptId, 'finalExamMarks', markData['id'] as String);
-              writeBatch.update(repairRef, {'calculated_total': calculatedTotal});
-            }
-          }
-
-          calculatedTotal ??= 0.0;
-          totalMarksObtained += calculatedTotal.round();
+          // Skip subjects where no exam marks have been entered
+          if (examFinal == null) continue;
 
           int credits = 0;
           int maxSubjectTotal = 100;
+          Map<String, dynamic>? subjectFullData;
 
           if (markData['subjectRef'] != null) {
             final subjectPath = (markData['subjectRef'] as DocumentReference).path;
             if (subjectInfoMap.containsKey(subjectPath)) {
               credits = subjectInfoMap[subjectPath]!['credits'] as int;
               maxSubjectTotal = subjectInfoMap[subjectPath]!['maxSubjectTotal'] as int;
+              subjectFullData = subjectInfoMap[subjectPath]!['subjectData'] as Map<String, dynamic>;
             }
           }
+
+          // Skip 0-credit subjects from SGPA calculation
+          if (credits <= 0) continue;
+
+          // Get latest iaFinal from the marks (internal marks) collection
+          // This is the source of truth, NOT the iaFinal stored in finalExamMarks
+          final markDocId = markData['id'] as String;
+          final internalMarkData = internalMarksMap[markDocId];
+          double latestIaFinal = (markData['iaFinal'] as num?)?.toDouble() ?? 0.0;
+          if (internalMarkData != null) {
+            latestIaFinal = (internalMarkData['calculated_iaFinal'] as num?)?.toDouble() ?? latestIaFinal;
+          }
+
+          // ALWAYS recalculate total from scratch using latest iaFinal + examFinal
+          double calculatedTotal;
+          if (subjectFullData != null) {
+            calculatedTotal = _markCalc.calculateTotalMarksLocal(
+              iaFinal: latestIaFinal,
+              examFinal: examFinal,
+              subjectData: subjectFullData,
+            );
+          } else {
+            // Fallback: use stored calculated_total if subject data unavailable
+            calculatedTotal = (markData['calculated_total'] as num?)?.toDouble() ?? 0.0;
+          }
+
+          // Auto-repair: update stale values in Firestore
+          final storedTotal = (markData['calculated_total'] as num?)?.toDouble();
+          final storedIaFinal = (markData['iaFinal'] as num?)?.toDouble();
+          if (storedTotal != calculatedTotal || storedIaFinal != latestIaFinal) {
+            final repairRef = FirestoreHelper.deptDoc(deptId, 'finalExamMarks', markDocId);
+            writeBatch.update(repairRef, {
+              'iaFinal': latestIaFinal,
+              'calculated_total': calculatedTotal,
+            });
+          }
+
+          totalMarksObtained += calculatedTotal.round();
 
           double scaledMarks = calculatedTotal;
           if (maxSubjectTotal != 100 && maxSubjectTotal > 0) {
@@ -368,10 +450,119 @@ class ResultsUpdateService {
       // Commit all writes atomically
       await writeBatch.commit();
 
+      // Clean up orphaned semesterResults (for deleted students) and recalculate ranks
+      await _cleanupOrphanedResults(deptId: deptId, batchYear: batchYear, semester: semester);
+      await _recalculateAndWriteRanks(deptId: deptId, batchYear: batchYear, semester: semester);
+
       return 'Results calculated for $processedCount students ($skippedCount skipped — no exam marks).';
     } catch (e) {
-      print('[ResultsUpdateService] Backfill error: $e');
+      debugPrint('[ResultsUpdateService] Backfill error: $e');
       return 'Error: ${e.toString()}';
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // RANK CALCULATION: Recalculate and write ranks for a batch + semester
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /// Fetches all semesterResults for a batch+semester, assigns ranks by
+  /// CGPA (primary) and SGPA (secondary) descending, then writes ranks back.
+  Future<void> _recalculateAndWriteRanks({
+    required String deptId,
+    required String batchYear,
+    required int semester,
+  }) async {
+    try {
+      final resultsSnapshot = await FirestoreHelper.deptCollection(deptId, 'semesterResults')
+          .where('batchYear', isEqualTo: batchYear)
+          .where('semester', isEqualTo: semester)
+          .get();
+
+      if (resultsSnapshot.docs.isEmpty) return;
+
+      // Build a list of (docRef, cgpa, sgpa) for sorting
+      final List<Map<String, dynamic>> entries = [];
+      for (final doc in resultsSnapshot.docs) {
+        final data = doc.data() as Map<String, dynamic>;
+        entries.add({
+          'ref': doc.reference,
+          'cgpa': (data['cgpa'] as num?)?.toDouble() ?? 0.0,
+          'sgpa': (data['sgpa'] as num?)?.toDouble() ?? 0.0,
+        });
+      }
+
+      // Sort by CGPA desc, then SGPA desc
+      entries.sort((a, b) {
+        final int cgpaCompare = (b['cgpa'] as double).compareTo(a['cgpa'] as double);
+        if (cgpaCompare != 0) return cgpaCompare;
+        return (b['sgpa'] as double).compareTo(a['sgpa'] as double);
+      });
+
+      // Assign ranks (same rank for tied students)
+      final batch = FirebaseFirestore.instance.batch();
+      int currentRank = 1;
+
+      for (int i = 0; i < entries.length; i++) {
+        if (i > 0 &&
+            entries[i]['cgpa'] == entries[i - 1]['cgpa'] &&
+            entries[i]['sgpa'] == entries[i - 1]['sgpa']) {
+          // Same rank as previous (tie)
+          batch.update(entries[i]['ref'] as DocumentReference, {'rank': currentRank - 1});
+        } else {
+          currentRank = i + 1;
+          batch.update(entries[i]['ref'] as DocumentReference, {'rank': currentRank});
+        }
+      }
+
+      await batch.commit();
+    } catch (e) {
+      debugPrint('[ResultsUpdateService] Rank calculation error: $e');
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // CLEANUP: Remove orphaned semesterResults for deleted students
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /// Checks all semesterResults for a batch+semester against the students
+  /// collection, and deletes any results whose student no longer exists.
+  Future<void> _cleanupOrphanedResults({
+    required String deptId,
+    required String batchYear,
+    required int semester,
+  }) async {
+    try {
+      // Fetch all students for this batch
+      final studentsSnapshot = await FirestoreHelper.deptCollection(deptId, 'students')
+          .where('batchYear', isEqualTo: batchYear)
+          .get();
+
+      final Set<String> validStudentIds = studentsSnapshot.docs.map((doc) => doc.id).toSet();
+
+      // Fetch all semesterResults for this batch + semester
+      final resultsSnapshot = await FirestoreHelper.deptCollection(deptId, 'semesterResults')
+          .where('batchYear', isEqualTo: batchYear)
+          .where('semester', isEqualTo: semester)
+          .get();
+
+      final batch = FirebaseFirestore.instance.batch();
+      int orphanCount = 0;
+
+      for (final doc in resultsSnapshot.docs) {
+        final data = doc.data() as Map<String, dynamic>;
+        final studentId = data['studentId'] as String?;
+        if (studentId != null && !validStudentIds.contains(studentId)) {
+          batch.delete(doc.reference);
+          orphanCount++;
+        }
+      }
+
+      if (orphanCount > 0) {
+        await batch.commit();
+        debugPrint('[ResultsUpdateService] Cleaned up $orphanCount orphaned semesterResults.');
+      }
+    } catch (e) {
+      debugPrint('[ResultsUpdateService] Cleanup error: $e');
     }
   }
 }

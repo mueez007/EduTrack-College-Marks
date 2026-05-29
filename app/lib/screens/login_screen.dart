@@ -7,6 +7,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../config/department_config.dart';
 import '../config/app_theme.dart';
 import '../providers/app_state.dart';
+import '../services/password_hash_service.dart';
 import '../services/firestore_helper.dart';
 import 'teacher/batch_select_screen.dart';
 import 'student/student_dashboard_screen.dart';
@@ -134,19 +135,63 @@ class _LoginScreenState extends State<LoginScreen>
       ),
     ).then((confirmed) async {
       if (confirmed != true) return;
-      if (passwordController.text == 'admin123') {
-        try { await FirebaseAuth.instance.signInAnonymously(); } catch (e) { print("Admin anon auth: $e"); }
+      final enteredPassword = passwordController.text;
+      if (enteredPassword.isEmpty) return;
+
+      setState(() => _isLoading = true);
+      try {
+        // Sign in anonymously first to read Firestore
+        await FirebaseAuth.instance.signInAnonymously();
+
+        // Check for stored admin password hash in Firestore
+        final adminDoc = await FirebaseFirestore.instance
+            .collection('appConfig')
+            .doc('adminAuth')
+            .get();
+
+        bool isValid = false;
+
+        if (adminDoc.exists && adminDoc.data()?['passwordHash'] != null) {
+          // Verify against stored hash
+          final storedHash = adminDoc.data()!['passwordHash'] as String;
+          isValid = PasswordHashService.verifyPassword(enteredPassword, storedHash);
+        } else {
+          // First-time setup: no admin password exists yet.
+          // Accept the entered password and store its hash.
+          final newHash = PasswordHashService.hashPassword(enteredPassword);
+          await FirebaseFirestore.instance
+              .collection('appConfig')
+              .doc('adminAuth')
+              .set({
+            'passwordHash': newHash,
+            'createdAt': FieldValue.serverTimestamp(),
+            'note': 'SHA-256 hashed admin password. Delete this doc to reset.',
+          });
+          isValid = true;
+          debugPrint('[ADMIN] First-time admin password set successfully.');
+        }
+
         if (!mounted) return;
-        Provider.of<AppState>(context, listen: false).setAdminMode(true);
-        Provider.of<AppState>(context, listen: false).setUserEmail('admin');
-        Navigator.pushReplacement(context, MaterialPageRoute(
-          builder: (context) => const AdminDepartmentSelectScreen(),
-        ));
-      } else {
+
+        if (isValid) {
+          Provider.of<AppState>(context, listen: false).setAdminMode(true);
+          Provider.of<AppState>(context, listen: false).setUserEmail('admin');
+          Navigator.pushReplacement(context, MaterialPageRoute(
+            builder: (context) => const AdminDepartmentSelectScreen(),
+          ));
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Invalid admin password.'), backgroundColor: Colors.red),
+          );
+        }
+      } catch (e) {
+        debugPrint('Admin login error: $e');
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Invalid admin password.'), backgroundColor: Colors.red),
+          SnackBar(content: Text('Admin login failed: $e'), backgroundColor: Colors.red),
         );
+      } finally {
+        if (mounted) setState(() => _isLoading = false);
       }
     });
   }
@@ -168,7 +213,7 @@ class _LoginScreenState extends State<LoginScreen>
         ));
         return;
       }
-    } catch (e) { print("Credential check error: $e"); }
+    } catch (e) { debugPrint("Credential check error: $e"); }
 
     final passwordController = TextEditingController();
     bool? confirmed = await showDialog<bool>(
@@ -245,7 +290,7 @@ class _LoginScreenState extends State<LoginScreen>
 
   Future<void> _handleStudentLogin(String usn) async {
     try {
-      try { await FirebaseAuth.instance.signInAnonymously(); } catch (e) { print("Anon auth: $e"); }
+      try { await FirebaseAuth.instance.signInAnonymously(); } catch (e) { debugPrint("Anon auth: $e"); }
       String? foundDeptId;
       String? foundDeptName;
       for (final dept in DepartmentConfig.departments) {

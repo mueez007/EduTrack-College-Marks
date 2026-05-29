@@ -178,7 +178,7 @@ class _IAQuestionwiseEntryScreenState extends State<IAQuestionwiseEntryScreen> {
         });
       }
     } catch (e) {
-      print('Error loading students for question-wise entry: $e');
+      debugPrint('Error loading students for question-wise entry: $e');
       if (mounted) {
         setState(() => _isLoading = false);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -297,7 +297,7 @@ class _IAQuestionwiseEntryScreenState extends State<IAQuestionwiseEntryScreen> {
         'lastUpdated': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
     } catch (e) {
-      print('Error saving question-wise marks for ${student.name}: $e');
+      debugPrint('Error saving question-wise marks for ${student.name}: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -402,7 +402,7 @@ class _IAQuestionwiseEntryScreenState extends State<IAQuestionwiseEntryScreen> {
       await FirestoreHelper.deptDoc(deptId, 'ia_configs', '${widget.subjectId}_${widget.iaFieldKey}')
           .delete();
     } catch (e) {
-      print('Error deleting config: $e');
+      debugPrint('Error deleting config: $e');
     }
 
     if (!mounted) return;
@@ -529,7 +529,7 @@ class _IAQuestionwiseEntryScreenState extends State<IAQuestionwiseEntryScreen> {
         name: pdfFileName,
       );
     } catch (e) {
-      print('Error generating PDF: $e');
+      debugPrint('Error generating PDF: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error creating PDF: $e'), backgroundColor: Colors.red),

@@ -20,20 +20,20 @@ class AppState with ChangeNotifier {
     _selectedBatchId = batchId;
     _selectedBatchName = batchName;
     notifyListeners(); // Notify widgets listening to this state
-    print("AppState Updated: Batch ID = $_selectedBatchId, Name = $_selectedBatchName");
+    debugPrint("AppState Updated: Batch ID = $_selectedBatchId, Name = $_selectedBatchName");
   }
 
   void setDepartment(String departmentId, String departmentName) {
     _departmentId = departmentId;
     _departmentName = departmentName;
     notifyListeners();
-    print("AppState Updated: Department ID = $_departmentId, Name = $_departmentName");
+    debugPrint("AppState Updated: Department ID = $_departmentId, Name = $_departmentName");
   }
 
   void setAdminMode(bool isAdmin) {
     _isAdmin = isAdmin;
     notifyListeners();
-    print("AppState Updated: Admin Mode = $_isAdmin");
+    debugPrint("AppState Updated: Admin Mode = $_isAdmin");
   }
 
   void setUserEmail(String? email) {
@@ -45,7 +45,7 @@ class AppState with ChangeNotifier {
      _selectedBatchId = null;
      _selectedBatchName = null;
      notifyListeners();
-     print("AppState Cleared: Batch selection removed.");
+     debugPrint("AppState Cleared: Batch selection removed.");
   }
 
   /// Clear all state on full logout.
@@ -57,7 +57,7 @@ class AppState with ChangeNotifier {
     _isAdmin = false;
     _userEmail = null;
     notifyListeners();
-    print("AppState Cleared: All state removed.");
+    debugPrint("AppState Cleared: All state removed.");
   }
 
   /// Convenience: Get a department-scoped collection reference.

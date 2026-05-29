@@ -40,7 +40,7 @@ class _BatchSelectScreenState extends State<BatchSelectScreen> {
       _selectedBatchId = batchId;
       _selectedBatchName = batchName;
     });
-    print("Selected Batch ID: $batchId, Name: $batchName");
+    debugPrint("Selected Batch ID: $batchId, Name: $batchName");
     Provider.of<AppState>(context, listen: false).setSelectedBatch(batchId, batchName);
     Navigator.pushReplacement(context,
       MaterialPageRoute(builder: (context) => const TeacherHomeScreen()));
@@ -83,7 +83,7 @@ class _BatchSelectScreenState extends State<BatchSelectScreen> {
                       if (mounted) Navigator.of(context).pop();
                     }
                   } catch (e) {
-                    print("Error adding batch: $e");
+                    debugPrint("Error adding batch: $e");
                     if (mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(content: Text('Failed to add batch. Error: $e'), backgroundColor: Colors.red));
@@ -111,7 +111,7 @@ class _BatchSelectScreenState extends State<BatchSelectScreen> {
           (Route<dynamic> route) => false);
       }
     } catch (e) {
-      print("Error logging out: $e");
+      debugPrint("Error logging out: $e");
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Logout failed: $e'), backgroundColor: Colors.red));

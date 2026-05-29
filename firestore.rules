@@ -2,102 +2,134 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // Help verify if the user is authenticated
+    // ===== HELPER FUNCTIONS =====
+    
+    // Check if user is authenticated (any method, including anonymous)
     function isAuthenticated() {
       return request.auth != null;
     }
     
-    // Helper to get active user role from department-scoped users collection
-    function getUserData(deptId) {
-      return get(/databases/$(database)/documents/departments/$(deptId)/users/$(request.auth.uid)).data;
+    // Get the user's role from the root-level /users collection
+    // Faculty users have role='faculty', set during credential creation
+    function getRootUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+    
+    // Check if the authenticated user is a faculty member
+    function isFaculty() {
+      return isAuthenticated() && getRootUserRole() == 'faculty';
     }
 
-    // --- Root-level users collection (used by Firebase Auth role verification) ---
+    // ===== ROOT-LEVEL COLLECTIONS =====
+
+    // Root users collection (Firebase Auth role mapping)
+    // Faculty can read/write (needed for credential creation flow)
+    // Students can read their own doc for role verification
     match /users/{userId} {
       allow read: if isAuthenticated();
-      allow write: if isAuthenticated();
+      allow write: if isFaculty();
     }
 
-    match /departments/{deptId} {
+    // App configuration (admin password hash, feature flags)
+    // All authenticated users can read (admin login needs this)
+    // Only faculty can write (change admin password)
+    match /appConfig/{configId} {
       allow read: if isAuthenticated();
-      allow write: if isAuthenticated();
+      allow write: if isAuthenticated();  // Admin sets this before faculty role exists
+    }
 
-      // --- Teacher Credentials (used by login + admin screen) ---
+    // ===== DEPARTMENT-SCOPED COLLECTIONS =====
+    
+    match /departments/{deptId} {
+      // Department document itself
+      allow read: if isAuthenticated();
+      allow write: if isFaculty();
+
+      // --- Teacher Credentials (ADMIN-ONLY WRITE) ---
+      // Only faculty can manage teacher credentials
+      // Students must not be able to read credentials either (contains emails)
       match /teacher_credentials/{credId} {
-        allow read: if isAuthenticated();
-        allow write: if isAuthenticated();
+        allow read: if isFaculty();
+        allow write: if isFaculty();
       }
 
       // --- Batches ---
       match /batches/{batchId} {
         allow read: if isAuthenticated();
-        allow write: if isAuthenticated();
+        allow write: if isFaculty();
       }
 
       // --- Students ---
       match /students/{studentId} {
         allow read: if isAuthenticated();
-        allow write: if isAuthenticated();
+        allow write: if isFaculty();
       }
 
       // --- Subjects ---
       match /subjects/{subjectId} {
         allow read: if isAuthenticated();
-        allow write: if isAuthenticated();
+        allow write: if isFaculty();
       }
 
       // --- IA Marks ---
       match /marks/{markId} {
         allow read: if isAuthenticated();
-        allow write: if isAuthenticated();
+        allow write: if isFaculty();
       }
 
       // --- Final Exam Marks ---
       match /finalExamMarks/{markId} {
         allow read: if isAuthenticated();
-        allow write: if isAuthenticated();
+        allow write: if isFaculty();
       }
 
       // --- Semester Results (SGPA/CGPA) ---
       match /semesterResults/{resultId} {
         allow read: if isAuthenticated();
-        allow write: if isAuthenticated();
+        allow write: if isFaculty();
       }
 
       // --- Public Ranks ---
       match /publicRanks/{rankId} {
         allow read: if isAuthenticated();
-        allow write: if isAuthenticated();
+        allow write: if isFaculty();
       }
 
       // --- Absentees (daily attendance) ---
       match /absentees/{absenteeId} {
         allow read: if isAuthenticated();
-        allow write: if isAuthenticated();
+        allow write: if isFaculty();
       }
       
       // --- Monthly Attendance ---
       match /attendanceMonthly/{attId} {
         allow read: if isAuthenticated();
-        allow write: if isAuthenticated();
+        allow write: if isFaculty();
       }
 
       // --- IA Question Configs ---
       match /ia_configs/{configId} {
         allow read: if isAuthenticated();
-        allow write: if isAuthenticated();
+        allow write: if isFaculty();
       }
 
       // --- IA Question Details ---
       match /ia_details/{detailId} {
         allow read: if isAuthenticated();
-        allow write: if isAuthenticated();
+        allow write: if isFaculty();
       }
 
       // --- User Metadata (department-scoped) ---
+      // Faculty writes student user docs during USN-based login
       match /users/{userId} {
         allow read: if isAuthenticated();
-        allow write: if isAuthenticated();
+        allow write: if isFaculty();
+      }
+
+      // --- Admin Config (hashed admin password) ---
+      match /appConfig/{configId} {
+        allow read: if isAuthenticated();
+        allow write: if isFaculty();
       }
     }
   }

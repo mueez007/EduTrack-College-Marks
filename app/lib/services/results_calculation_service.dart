@@ -18,9 +18,14 @@ import 'dart:math';
 class ResultsCalculationService {
 
   // Helper to strictly truncate a double to a specific number of decimals
+  // Includes epsilon correction for floating-point precision issues
+  // (e.g., 9.9999999999 due to int division should become 10.0, not 9.99)
   double _truncateToDecimal(double value, int fractionDigits) {
+    // Apply epsilon to counteract floating-point drift from integer arithmetic
+    const double epsilon = 1e-9;
+    final double corrected = value + epsilon;
     final num power = pow(10, fractionDigits);
-    final int intValue = (value * power).truncate();
+    final int intValue = (corrected * power).truncate();
     return intValue / power;
   }
 

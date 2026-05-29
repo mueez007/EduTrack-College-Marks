@@ -197,23 +197,9 @@ class _FinalExamMarksScreenState extends State<FinalExamMarksScreen> {
             subjectData: subjectDataMap,
           );
 
-          // c2) AUTO-REPAIR: If finalExamMarks doc exists in memory but has wrong/missing iaFinal,
-          // update it immediately so student view shows correct data.
-          if (finalExamMarkData != null && iaFinalMark != null && examFinalMark != null) {
-            final existingIaFinal = (finalExamMarkData['iaFinal'] as num?)?.toDouble();
-            final existingTotal = (finalExamMarkData['calculated_total'] as num?)?.toDouble();
-            
-            // Fix if iaFinal is missing/wrong OR calculated_total is wrong
-            if (existingIaFinal != iaFinalMark || existingTotal != calculatedTotalMark) {
-              // Fire-and-forget update to fix stale data
-              FirestoreHelper.deptDoc(deptId, 'finalExamMarks', docId)
-                  .update({
-                'iaFinal': iaFinalMark,
-                'calculated_total': calculatedTotalMark,
-              }).catchError((e) => print('Auto-repair failed for $docId: $e'));
-              print('[AUTO-REPAIR] Fixed finalExamMarks/$docId: iaFinal=$iaFinalMark, total=$calculatedTotalMark');
-            }
-          }
+          // Note: If iaFinal or calculated_total are stale in Firestore,
+          // they will be corrected on the next save operation (which re-fetches iaFinal).
+          // Auto-repair on every load was removed to conserve Spark plan write budget.
 
           // d) Create Controller and Focus Node
           final controller = TextEditingController(
@@ -248,13 +234,18 @@ class _FinalExamMarksScreenState extends State<FinalExamMarksScreen> {
       }
 
       if (mounted) {
+        // Dispose old controllers before replacing them to prevent memory leaks
+        for (var sm in _studentFinalMarks) {
+          sm.subjectMarks.forEach((_, data) => data.controller.dispose());
+        }
+
         setState(() {
           _studentFinalMarks = loadedData;
           _isLoading = false;
         });
       }
     } catch (e) {
-      print("Error loading final marks data: $e");
+      debugPrint("Error loading final marks data: $e");
       if (mounted) {
         setState(() => _isLoading = false);
         _showError("Error loading data: ${e.toString()}");
@@ -297,7 +288,7 @@ class _FinalExamMarksScreenState extends State<FinalExamMarksScreen> {
           latestIaFinal = (iaMarkData['calculated_iaFinal'] as num?)?.toDouble();
         }
       } catch (e) {
-        print('Warning: Could not fetch latest iaFinal: $e');
+        debugPrint('Warning: Could not fetch latest iaFinal: $e');
       }
 
       // Recalculate Total locally using latest iaFinal
@@ -350,9 +341,19 @@ class _FinalExamMarksScreenState extends State<FinalExamMarksScreen> {
         studentId: studentModel.studentId,
         semester: _selectedSemester,
         batchYear: _selectedBatchId!,
-      );
+      ).catchError((e) {
+        debugPrint("Error in background recalculation: $e");
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Warning: Background recalculation failed: $e'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+      });
     } catch (e) {
-      print("Error saving final mark: $e");
+      debugPrint("Error saving final mark: $e");
       _showError(
         "Error saving for ${subjectData.subjectCode}: ${e.toString()}",
       );
@@ -559,7 +560,7 @@ class _FinalExamMarksScreenState extends State<FinalExamMarksScreen> {
         name: pdfFileName,
       );
     } catch (e) {
-      print("Error generating Final PDF: $e");
+      debugPrint("Error generating Final PDF: $e");
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(

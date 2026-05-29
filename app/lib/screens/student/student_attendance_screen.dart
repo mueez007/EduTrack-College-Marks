@@ -114,7 +114,7 @@ class _StudentAttendanceScreenState extends State<StudentAttendanceScreen> {
         });
       }
     } catch (e) {
-      print('Error loading student attendance: $e');
+      debugPrint('Error loading student attendance: $e');
       if (mounted) {
         setState(() => _isLoading = false);
         ScaffoldMessenger.of(context).showSnackBar(

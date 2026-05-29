@@ -67,29 +67,35 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
           _studentId = studentDoc.id; // Store document ID
         });
 
-        // Also create/update user record for Firebase Auth compatibility
-        final currentUser = FirebaseAuth.instance.currentUser;
-        if (currentUser != null) {
-          final deptId2 = Provider.of<AppState>(context, listen: false).departmentId;
-          if (deptId2 != null) {
-            await FirestoreHelper.deptDoc(deptId2, 'users', currentUser.uid)
-                .set({
-              'role': 'student',
-              'usn': _studentUsn,
-              'name': _studentName,
-              'batchYear': _selectedBatchId,
-              'studentId': studentDoc.id,
-              'createdAt': FieldValue.serverTimestamp(),
-            }, SetOptions(merge: true));
+        // Attempt to create/update user record for Firebase Auth compatibility.
+        // This may fail if Firestore rules deny student writes — that's OK.
+        try {
+          final currentUser = FirebaseAuth.instance.currentUser;
+          if (currentUser != null) {
+            final deptId2 = Provider.of<AppState>(context, listen: false).departmentId;
+            if (deptId2 != null) {
+              await FirestoreHelper.deptDoc(deptId2, 'users', currentUser.uid)
+                  .set({
+                'role': 'student',
+                'usn': _studentUsn,
+                'name': _studentName,
+                'batchYear': _selectedBatchId,
+                'studentId': studentDoc.id,
+                'createdAt': FieldValue.serverTimestamp(),
+              }, SetOptions(merge: true));
+            }
           }
+        } catch (e) {
+          // Expected to fail with read-only student rules — non-critical
+          debugPrint("Student user doc write skipped (read-only rules): $e");
         }
 
         _loadSemesterData();
       } else {
-        print("Student with USN $_studentUsn not found");
+        debugPrint("Student with USN $_studentUsn not found");
       }
     } catch (e) {
-      print("Error loading student by USN: $e");
+      debugPrint("Error loading student by USN: $e");
     }
   }
 
@@ -112,7 +118,7 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
         _loadSemesterData(); // Load data for the initial semester (Sem 1)
       }
     } catch (e) {
-      print("Error loading student details: $e");
+      debugPrint("Error loading student details: $e");
     }
   }
 

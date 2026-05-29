@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 /// One-time migration utility to copy root-level Firestore data
@@ -92,14 +94,14 @@ class DataMigrationService {
         }
 
         totalMigrated += copiedInCollection;
-        print('[MIGRATION] $collectionName: $copiedInCollection/$totalDocs docs migrated');
+        debugPrint('[MIGRATION] $collectionName: $copiedInCollection/$totalDocs docs migrated');
       } catch (e) {
-        print('[MIGRATION ERROR] $collectionName: $e');
+        debugPrint('[MIGRATION ERROR] $collectionName: $e');
         onProgress?.call('ERROR: $collectionName', -1, -1);
       }
     }
 
-    print('[MIGRATION COMPLETE] Total: $totalMigrated documents migrated to departments/$departmentId');
+    debugPrint('[MIGRATION COMPLETE] Total: $totalMigrated documents migrated to departments/$departmentId');
     return totalMigrated;
   }
 

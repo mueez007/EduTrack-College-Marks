@@ -87,11 +87,17 @@ class _SgpaCgpaScreenState extends State<SgpaCgpaScreen> {
       final deptId = Provider.of<AppState>(context, listen: false).departmentId;
       if (deptId == null) return;
 
-      // 1. Fetch pre-calculated semesterResults from Firestore directly (1 read query!)
+      // 1. Fetch pre-calculated semesterResults from Firestore directly
       QuerySnapshot resultsSnapshot = await FirestoreHelper.deptCollection(deptId, 'semesterResults')
           .where('batchYear', isEqualTo: _selectedBatchId)
           .where('semester', isEqualTo: _selectedSemester)
           .get();
+
+      // 1b. Fetch valid student IDs to filter out orphaned/deleted student results
+      QuerySnapshot studentsSnapshot = await FirestoreHelper.deptCollection(deptId, 'students')
+          .where('batchYear', isEqualTo: _selectedBatchId)
+          .get();
+      final Set<String> validStudentIds = studentsSnapshot.docs.map((doc) => doc.id).toSet();
 
       List<StudentResultModel> loadedResults = [];
       double totalSgpaSum = 0.0;
@@ -100,6 +106,10 @@ class _SgpaCgpaScreenState extends State<SgpaCgpaScreen> {
       for (var doc in resultsSnapshot.docs) {
         final data = doc.data() as Map<String, dynamic>;
         final studentId = data['studentId'] as String;
+
+        // Skip results for deleted students
+        if (!validStudentIds.contains(studentId)) continue;
+
         final name = data['name'] as String? ?? data['studentName'] as String? ?? 'No Name';
         final usn = data['usn'] as String? ?? 'N/A';
         final sgpa = (data['sgpa'] as num?)?.toDouble() ?? 0.0;
@@ -137,7 +147,7 @@ class _SgpaCgpaScreenState extends State<SgpaCgpaScreen> {
         });
       }
     } catch (e) {
-      print("Error loading calculated results: $e");
+      debugPrint("Error loading calculated results: $e");
       if (mounted) {
         setState(() => _isLoading = false);
         _showError("Failed to load results: ${e.toString()}");
@@ -171,7 +181,7 @@ class _SgpaCgpaScreenState extends State<SgpaCgpaScreen> {
       // Reload the results after backfill
       await _loadCalculatedResults();
     } catch (e) {
-      print("Error recalculating results: $e");
+      debugPrint("Error recalculating results: $e");
       if (mounted) {
         setState(() => _isLoading = false);
         _showError("Failed to recalculate: ${e.toString()}");
@@ -215,7 +225,7 @@ class _SgpaCgpaScreenState extends State<SgpaCgpaScreen> {
       _showSnackbar("Ranks successfully published to student portal.", Colors.green);
       setState(() => _isLoading = false);
     } catch (e) {
-      print("Error publishing ranks: $e");
+      debugPrint("Error publishing ranks: $e");
       setState(() => _isLoading = false);
       _showError("Failed to publish ranks: ${e.toString()}");
     }

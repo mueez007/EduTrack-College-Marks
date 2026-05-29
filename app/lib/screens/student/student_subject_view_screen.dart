@@ -98,19 +98,8 @@ class _StudentSubjectViewScreenState extends State<StudentSubjectViewScreen> {
         );
         _examComponent = _subjectTotal - _iaFinal;
         
-        // Auto-repair: If finalExamMarks has wrong iaFinal, fix it
-        final storedIaFinal = (finalData['iaFinal'] as num?)?.toDouble() ?? 0.0;
-        final storedTotal = (finalData['calculated_total'] as num?)?.toDouble() ?? 0.0;
-        
-        if ((storedIaFinal - _iaFinal).abs() > 0.01 || (storedTotal - _subjectTotal).abs() > 0.01) {
-          // Fix the stale data in Firestore
-              FirestoreHelper.deptDoc(deptId, 'finalExamMarks', markDocId)
-              .update({
-            'iaFinal': _iaFinal,
-            'calculated_total': _subjectTotal,
-          }).catchError((e) => print('Auto-repair failed: $e'));
-          print('[STUDENT VIEW AUTO-REPAIR] Fixed $markDocId: iaFinal=$_iaFinal, total=$_subjectTotal');
-        }
+        // Note: Auto-repair removed. Students are read-only per Firestore rules.
+        // Stale data will be corrected when teacher next saves exam marks.
       }
       
       // 3. Fetch rank from publicRanks
@@ -128,7 +117,7 @@ class _StudentSubjectViewScreenState extends State<StudentSubjectViewScreen> {
       }
       
     } catch (e) {
-      print('Error loading student subject data: $e');
+      debugPrint('Error loading student subject data: $e');
     }
     
     if (mounted) {

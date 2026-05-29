@@ -100,7 +100,7 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
         });
       }
     } catch (e) {
-      print('Error checking IA data: $e');
+      debugPrint('Error checking IA data: $e');
     }
   }
 
@@ -276,6 +276,11 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
       }
 
       if (mounted) {
+        // Dispose old controllers before replacing them to prevent memory leaks
+        for (var sm in _studentMarks) {
+          sm.controllers.forEach((_, controller) => controller.dispose());
+        }
+        
         setState(() {
           _studentMarks = loadedMarks;
           _isLoading = false;
@@ -284,7 +289,7 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
         _calculateClassAverages(loadedMarks);
       }
     } catch (e) {
-      print("Error loading student marks: $e");
+      debugPrint("Error loading student marks: $e");
       if (mounted) {
         setState(() => _isLoading = false);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -408,7 +413,7 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
         );
       }
     } catch (e) {
-      print("Error saving marks for ${studentMark.name}: $e");
+      debugPrint("Error saving marks for ${studentMark.name}: $e");
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -482,7 +487,7 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
       }
       // If finalExamMarks doc doesn't exist yet, no propagation needed
     } catch (e) {
-      print('IA propagation skipped for $markDocId: $e');
+      debugPrint('IA propagation skipped for $markDocId: $e');
     }
   }
 
@@ -836,7 +841,7 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
         name: pdfFileName,
       );
     } catch (e) {
-      print("Error generating PDF: $e");
+      debugPrint("Error generating PDF: $e");
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(

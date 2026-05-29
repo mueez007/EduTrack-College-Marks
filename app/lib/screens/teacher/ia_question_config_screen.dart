@@ -102,7 +102,7 @@ class _IAQuestionConfigScreenState extends State<IAQuestionConfigScreen> {
         return;
       }
     } catch (e) {
-      print('Error checking existing config: $e');
+      debugPrint('Error checking existing config: $e');
     }
 
     if (mounted) {
@@ -194,7 +194,7 @@ class _IAQuestionConfigScreenState extends State<IAQuestionConfigScreen> {
         'createdAt': FieldValue.serverTimestamp(),
       });
     } catch (e) {
-      print('Error saving config: $e');
+      debugPrint('Error saving config: $e');
     }
   }
 

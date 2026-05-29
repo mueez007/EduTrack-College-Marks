@@ -100,7 +100,7 @@ class _DailyAbsenteeScreenState extends State<DailyAbsenteeScreen> {
 
       setState(() => _isLoading = false);
     } catch (e) {
-      print("Error loading data: $e");
+      debugPrint("Error loading data: $e");
       setState(() => _isLoading = false);
       _showError('Failed to load data: $e');
     }
@@ -136,7 +136,7 @@ class _DailyAbsenteeScreenState extends State<DailyAbsenteeScreen> {
         });
       }
     } catch (e) {
-      print("Error loading absentees: $e");
+      debugPrint("Error loading absentees: $e");
     }
   }
 

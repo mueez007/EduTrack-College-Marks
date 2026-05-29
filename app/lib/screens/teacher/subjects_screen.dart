@@ -259,7 +259,7 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
                       );
 
                     } catch (e) {
-                       print("Error adding subject: $e");
+                       debugPrint("Error adding subject: $e");
                        setDialogState(() => isSaving = false);
                        if (!dialogContext.mounted) return;
                        ScaffoldMessenger.of(dialogContext).showSnackBar(
@@ -596,7 +596,7 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
                    return const Center(child: CircularProgressIndicator());
                  }
                  if (snapshot.hasError) {
-                   print("Firestore Stream Error (Subjects): ${snapshot.error}");
+                   debugPrint("Firestore Stream Error (Subjects): ${snapshot.error}");
                    return Center(child: Text('Error fetching subjects: ${snapshot.error}'));
                  }
                  if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
