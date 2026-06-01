@@ -201,20 +201,64 @@ class _LoginScreenState extends State<LoginScreen>
     final dept = DepartmentConfig.getById(deptId);
     final deptName = dept?.name ?? deptId;
 
+    // STEP 1: Verify the email is registered in the SELECTED department's
+    // teacher_credentials. This is the authoritative department-access check.
+    // If this fails for any reason, login is blocked — no silent fallthrough.
     try {
+      // Sign in anonymously to read Firestore if not already authenticated
+      if (FirebaseAuth.instance.currentUser == null) {
+        await FirebaseAuth.instance.signInAnonymously();
+      }
+
       final credQuery = await FirestoreHelper.deptCollection(deptId, 'teacher_credentials')
           .where('email', isEqualTo: email).limit(1).get();
       if (credQuery.docs.isEmpty) {
         if (!mounted) return;
         setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('This email is not registered for $deptName.'),
-          backgroundColor: Colors.red, duration: const Duration(seconds: 4),
-        ));
+
+        // Check if this email exists in ANY other department to give a helpful message
+        String? actualDeptName;
+        for (final otherDept in DepartmentConfig.departments) {
+          if (otherDept.id == deptId) continue;
+          try {
+            final otherQuery = await FirestoreHelper.deptCollection(otherDept.id, 'teacher_credentials')
+                .where('email', isEqualTo: email).limit(1).get();
+            if (otherQuery.docs.isNotEmpty) {
+              actualDeptName = otherDept.name;
+              break;
+            }
+          } catch (_) {}
+        }
+
+        if (!mounted) return;
+        if (actualDeptName != null) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(
+              'This email belongs to "$actualDeptName". '
+              'Please select that department to login, or use credentials registered for $deptName.',
+            ),
+            backgroundColor: Colors.orange, duration: const Duration(seconds: 5),
+          ));
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('This email is not registered for $deptName.'),
+            backgroundColor: Colors.red, duration: const Duration(seconds: 4),
+          ));
+        }
         return;
       }
-    } catch (e) { debugPrint("Credential check error: $e"); }
+    } catch (e) {
+      debugPrint("Credential check error: $e");
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Could not verify credentials. Please try again.'),
+        backgroundColor: Colors.red,
+      ));
+      return;
+    }
 
+    // STEP 2: Show password dialog
     final passwordController = TextEditingController();
     bool? confirmed = await showDialog<bool>(
       context: context,
@@ -264,6 +308,7 @@ class _LoginScreenState extends State<LoginScreen>
       return;
     }
 
+    // STEP 3: Authenticate with Firebase Auth and verify faculty role
     try {
       UserCredential userCredential = await FirebaseAuth.instance
           .signInWithEmailAndPassword(email: email, password: passwordController.text);
@@ -273,6 +318,13 @@ class _LoginScreenState extends State<LoginScreen>
         await FirebaseAuth.instance.signOut();
         throw Exception("Access Denied: Faculty profile not found.");
       }
+
+      // Department access was already verified in STEP 1 via teacher_credentials.
+      // The teacher_credentials collection is the single source of truth for
+      // which department(s) a teacher can access. No additional departmentId
+      // check needed here — the credential check above already confirmed
+      // this email is registered for the selected department.
+
       if (mounted) {
         Provider.of<AppState>(context, listen: false).setDepartment(deptId, deptName);
         Provider.of<AppState>(context, listen: false).setUserEmail(email);

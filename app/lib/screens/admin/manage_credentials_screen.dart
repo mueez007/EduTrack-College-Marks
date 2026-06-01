@@ -146,6 +146,25 @@ class _ManageCredentialsScreenState extends State<ManageCredentialsScreen> {
                               return;
                             }
 
+                            // Also check if this email is registered in another department
+                            // and warn the admin (but still allow it — a teacher CAN teach
+                            // in multiple departments)
+                            String? existingDeptName;
+                            for (final dept in DepartmentConfig.departments) {
+                              if (dept.id == _selectedDepartmentId) continue;
+                              try {
+                                final otherQuery = await FirestoreHelper
+                                    .deptCollection(dept.id, 'teacher_credentials')
+                                    .where('email', isEqualTo: email)
+                                    .limit(1)
+                                    .get();
+                                if (otherQuery.docs.isNotEmpty) {
+                                  existingDeptName = dept.name;
+                                  break;
+                                }
+                              } catch (_) {}
+                            }
+
                             // Create Firebase Auth account for the teacher
                             String? newUid;
                             try {
@@ -174,11 +193,24 @@ class _ManageCredentialsScreenState extends State<ManageCredentialsScreen> {
                               });
                             } on FirebaseAuthException catch (authErr) {
                               if (authErr.code == 'email-already-in-use') {
-                                // Account exists — just add to department mapping
-                                debugPrint('Auth account already exists for $email, adding department mapping only.');
-                                // Re-sign in as admin if we got signed out
-                                if (FirebaseAuth.instance.currentUser == null) {
+                                // Account already exists in Firebase Auth.
+                                // Try signing in to get the existing UID.
+                                debugPrint('Auth account already exists for $email, retrieving UID.');
+                                try {
+                                  final existingCred = await FirebaseAuth.instance
+                                      .signInWithEmailAndPassword(
+                                    email: email,
+                                    password: password,
+                                  );
+                                  newUid = existingCred.user!.uid;
+                                  await FirebaseAuth.instance.signOut();
                                   await FirebaseAuth.instance.signInAnonymously();
+                                } catch (signInErr) {
+                                  debugPrint('Could not sign in as existing user: $signInErr');
+                                  // Password might differ — proceed without UID
+                                  if (FirebaseAuth.instance.currentUser == null) {
+                                    await FirebaseAuth.instance.signInAnonymously();
+                                  }
                                 }
                               } else {
                                 rethrow;
@@ -192,17 +224,21 @@ class _ManageCredentialsScreenState extends State<ManageCredentialsScreen> {
                             ).add({
                               'email': email,
                               'uid': newUid,
+                              'departmentId': _selectedDepartmentId,
                               'createdAt': FieldValue.serverTimestamp(),
                             });
 
                             if (!dialogContext.mounted) return;
                             Navigator.pop(dialogContext);
                             if (mounted) {
+                              final msg = existingDeptName != null
+                                  ? '$email added. Note: This email is also registered in "$existingDeptName".'
+                                  : '$email added with login credentials.';
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
-                                  content: Text(
-                                      '$email added with login credentials.'),
-                                  backgroundColor: Colors.green,
+                                  content: Text(msg),
+                                  backgroundColor: existingDeptName != null ? Colors.orange : Colors.green,
+                                  duration: Duration(seconds: existingDeptName != null ? 5 : 3),
                                 ),
                               );
                             }
