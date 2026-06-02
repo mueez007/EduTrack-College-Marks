@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 
 import '../../config/department_config.dart';
 import '../../services/firestore_helper.dart';
@@ -168,20 +169,50 @@ class _ManageCredentialsScreenState extends State<ManageCredentialsScreen> {
                             // Create Firebase Auth account for the teacher
                             String? newUid;
                             try {
-                              final userCredential = await FirebaseAuth.instance
+                              // Use a secondary Firebase app to prevent logging out the admin
+                              FirebaseApp secondaryApp = await Firebase.initializeApp(
+                                name: 'SecondaryApp_${DateTime.now().millisecondsSinceEpoch}',
+                                options: Firebase.app().options,
+                              );
+                              
+                              final userCredential = await FirebaseAuth.instanceFor(app: secondaryApp)
                                   .createUserWithEmailAndPassword(
                                 email: email,
                                 password: password,
                               );
                               newUid = userCredential.user!.uid;
+                              
+                              await secondaryApp.delete();
+                            } on FirebaseAuthException catch (authErr) {
+                              if (authErr.code == 'email-already-in-use') {
+                                // Account already exists in Firebase Auth.
+                                // Try signing in to get the existing UID.
+                                debugPrint('Auth account already exists for $email, retrieving UID.');
+                                try {
+                                  FirebaseApp secondaryApp = await Firebase.initializeApp(
+                                    name: 'SecondaryAppLogin_${DateTime.now().millisecondsSinceEpoch}',
+                                    options: Firebase.app().options,
+                                  );
+                                  
+                                  final existingCred = await FirebaseAuth.instanceFor(app: secondaryApp)
+                                      .signInWithEmailAndPassword(
+                                    email: email,
+                                    password: password,
+                                  );
+                                  newUid = existingCred.user!.uid;
+                                  
+                                  await secondaryApp.delete();
+                                } catch (signInErr) {
+                                  debugPrint('Could not sign in as existing user: $signInErr');
+                                }
+                              } else {
+                                rethrow;
+                              }
+                            }
 
-                              // Sign out the newly created user immediately
-                              await FirebaseAuth.instance.signOut();
-
-                              // Re-authenticate as admin (anonymous) BEFORE writing docs
-                              await FirebaseAuth.instance.signInAnonymously();
-
+                            if (newUid != null) {
                               // NOW write the users doc with faculty role (as admin)
+                              // This ensures the faculty role is present even if the account already existed
                               await FirebaseFirestore.instance
                                   .collection('users')
                                   .doc(newUid)
@@ -191,30 +222,6 @@ class _ManageCredentialsScreenState extends State<ManageCredentialsScreen> {
                                 'departmentId': _selectedDepartmentId,
                                 'createdAt': FieldValue.serverTimestamp(),
                               });
-                            } on FirebaseAuthException catch (authErr) {
-                              if (authErr.code == 'email-already-in-use') {
-                                // Account already exists in Firebase Auth.
-                                // Try signing in to get the existing UID.
-                                debugPrint('Auth account already exists for $email, retrieving UID.');
-                                try {
-                                  final existingCred = await FirebaseAuth.instance
-                                      .signInWithEmailAndPassword(
-                                    email: email,
-                                    password: password,
-                                  );
-                                  newUid = existingCred.user!.uid;
-                                  await FirebaseAuth.instance.signOut();
-                                  await FirebaseAuth.instance.signInAnonymously();
-                                } catch (signInErr) {
-                                  debugPrint('Could not sign in as existing user: $signInErr');
-                                  // Password might differ — proceed without UID
-                                  if (FirebaseAuth.instance.currentUser == null) {
-                                    await FirebaseAuth.instance.signInAnonymously();
-                                  }
-                                }
-                              } else {
-                                rethrow;
-                              }
                             }
 
                             // Add to department's teacher_credentials
