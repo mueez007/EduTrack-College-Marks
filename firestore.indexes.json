@@ -48,6 +48,16 @@
         { "fieldPath": "studentId", "order": "ASCENDING" },
         { "fieldPath": "semester", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "attendance_edits",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "batchYear", "order": "ASCENDING" },
+        { "fieldPath": "semester", "order": "ASCENDING" },
+        { "fieldPath": "subjectId", "order": "ASCENDING" },
+        { "fieldPath": "undoTimestamp", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

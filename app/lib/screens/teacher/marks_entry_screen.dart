@@ -144,6 +144,8 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
     double sumIa2 = 0;
     double sumIa3 = 0;
     double sumProjAssign = 0;
+    double sumLabMarks = 0;
+    double sumLabIaMarks = 0;
     double sumIaFinal = 0;
     int validStudentCount = 0;
 
@@ -156,6 +158,12 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
         if (mark.ia3 != null) sumIa3 += mark.ia3!;
         if (mark.projectOrAssignment != null) {
           sumProjAssign += mark.projectOrAssignment!;
+        }
+        if (mark.labMarks != null) {
+          sumLabMarks += mark.labMarks!;
+        }
+        if (mark.labIaMarks != null) {
+          sumLabIaMarks += mark.labIaMarks!;
         }
         if (mark.calculatedIaFinal != null) {
           sumIaFinal += mark.calculatedIaFinal!;
@@ -170,6 +178,8 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
           'ia_2': sumIa2 / validStudentCount,
           'ia_3': sumIa3 / validStudentCount,
           'projectOrAssignment': sumProjAssign / validStudentCount,
+          'labMarks': sumLabMarks / validStudentCount,
+          'labIaMarks': sumLabIaMarks / validStudentCount,
           'iaFinal': sumIaFinal / validStudentCount,
         };
       });
@@ -231,6 +241,8 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
         int? ia2 = markData?['ia_2'] as int?;
         int? ia3 = markData?['ia_3'] as int?;
         int? projAssign = markData?['projectOrAssignment'] as int?;
+        int? labMarks = markData?['labMarks'] as int?;
+        int? labIaMarks = markData?['labIaMarks'] as int?;
 
         final controllers = {
           'ia_1': TextEditingController(text: ia1?.toString() ?? ''),
@@ -238,6 +250,12 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
           'ia_3': TextEditingController(text: ia3?.toString() ?? ''),
           'projectOrAssignment': TextEditingController(
             text: projAssign?.toString() ?? '',
+          ),
+          'labMarks': TextEditingController(
+            text: labMarks?.toString() ?? '',
+          ),
+          'labIaMarks': TextEditingController(
+            text: labIaMarks?.toString() ?? '',
           ),
         };
 
@@ -247,6 +265,8 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
           _focusNodes['${studentId}_ia_2'] = FocusNode();
           _focusNodes['${studentId}_ia_3'] = FocusNode();
           _focusNodes['${studentId}_projectOrAssignment'] = FocusNode();
+          _focusNodes['${studentId}_labMarks'] = FocusNode();
+          _focusNodes['${studentId}_labIaMarks'] = FocusNode();
         }
 
         // Calculate initial IA Final
@@ -255,6 +275,8 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
           ia2: ia2,
           ia3: ia3,
           projectOrAssignment: projAssign,
+          labMarks: labMarks,
+          labIaMarks: labIaMarks,
           subjectData: widget.subjectData,
         );
 
@@ -267,6 +289,8 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
             ia2: ia2,
             ia3: ia3,
             projectOrAssignment: projAssign,
+            labMarks: labMarks,
+            labIaMarks: labIaMarks,
             calculatedIaFinal: initialCalculatedFinal,
             controllers: controllers,
             subjectData: widget.subjectData,
@@ -311,6 +335,20 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
     int? projAssign = int.tryParse(
       studentMark.controllers['projectOrAssignment']!.text,
     );
+    int? labMarks = int.tryParse(
+      studentMark.controllers['labMarks']!.text,
+    );
+    int? labIaMarks = int.tryParse(
+      studentMark.controllers['labIaMarks']!.text,
+    );
+
+    final String iaRule = widget.subjectData['iaCalculationRule'] ?? 'DEFAULT_RULE';
+    int maxProjAssignValidation = widget.subjectData['maxProject'] ?? 25;
+    if (iaRule == 'BEST_2_OF_3_AVG') {
+      maxProjAssignValidation = widget.subjectData['maxAssignment'] ?? 10;
+    }
+    int maxLabValidation = widget.subjectData['maxLab'] ?? 15;
+    int maxLabIaValidation = widget.subjectData['maxLabIa'] ?? 10;
 
     // Quick validation check before saving
     if ((ia1 != null &&
@@ -321,7 +359,13 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
             (ia3 < 0 || ia3 > (widget.subjectData['baseInternalMax'] ?? 40))) ||
         (projAssign != null &&
             (projAssign < 0 ||
-                projAssign > (widget.subjectData['maxProject'] ?? 25)))) {
+                projAssign > maxProjAssignValidation)) ||
+        (labMarks != null &&
+            (labMarks < 0 ||
+                labMarks > maxLabValidation)) ||
+        (labIaMarks != null &&
+            (labIaMarks < 0 ||
+                labIaMarks > maxLabIaValidation))) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Error: Mark is outside the allowed range.'),
@@ -338,6 +382,8 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
         ia2: ia2,
         ia3: ia3,
         projectOrAssignment: projAssign,
+        labMarks: labMarks,
+        labIaMarks: labIaMarks,
         subjectData: widget.subjectData, // Use subject-specific rules
       );
 
@@ -347,6 +393,8 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
         'ia_2': ia2,
         'ia_3': ia3,
         'projectOrAssignment': projAssign,
+        'labMarks': labMarks,
+        'labIaMarks': labIaMarks,
         'calculated_iaFinal':
             calculatedFinal, // Store the locally calculated result
         // --- AUTOMATION FIELDS ADDED ---
@@ -398,6 +446,7 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
               ia2: ia2,
               ia3: ia3,
               projectOrAssignment: projAssign,
+              labMarks: labMarks,
               calculatedIaFinal: calculatedFinal, // Update displayed final
             );
           }
@@ -521,9 +570,27 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
             _focusNodes['${studentMark.studentId}_projectOrAssignment'];
         break;
       case 'projectOrAssignment':
-        label = widget.subjectData['iaCalculationRule'] == 'SEM_5_6_SCHEMA'
+        label = widget.subjectData['iaCalculationRule'] == 'SEM_5_6_SCHEMA' || widget.subjectData['iaCalculationRule'] == 'SEM_SPECIAL_100_MARK_SCHEMA'
             ? 'Proj'
             : 'Asgn';
+        if (widget.subjectData['iaCalculationRule'] == 'BEST_2_OF_3_AVG') {
+          action = TextInputAction.next;
+          nextFocusNode = _focusNodes['${studentMark.studentId}_labMarks'];
+        } else {
+          action = TextInputAction.done;
+        }
+        break;
+      case 'labMarks':
+        label = 'Lab CE';
+        action = widget.subjectData['iaCalculationRule'] == 'BEST_2_OF_3_AVG'
+            ? TextInputAction.next
+            : TextInputAction.done;
+        if (action == TextInputAction.next) {
+          nextFocusNode = _focusNodes['${studentMark.studentId}_labIaMarks'];
+        }
+        break;
+      case 'labIaMarks':
+        label = 'Lab IA';
         action = TextInputAction.done;
         break;
       default:
@@ -570,6 +637,9 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
               projectOrAssignment: int.tryParse(
                 studentMark.controllers['projectOrAssignment']!.text,
               ),
+              labMarks: int.tryParse(
+                studentMark.controllers['labMarks']!.text,
+              ),
               subjectData: widget.subjectData,
             );
             final index = _studentMarks.indexWhere(
@@ -583,6 +653,9 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
                 ia3: int.tryParse(studentMark.controllers['ia_3']!.text),
                 projectOrAssignment: int.tryParse(
                   studentMark.controllers['projectOrAssignment']!.text,
+                ),
+                labMarks: int.tryParse(
+                  studentMark.controllers['labMarks']!.text,
                 ),
               );
             }
@@ -711,6 +784,10 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
       maxProjAssign = widget.subjectData['maxAssignment'] ?? 10;
       projAssignHeader = 'Assign';
     }
+    
+    final int maxLab = widget.subjectData['maxLab'] ?? 15;
+    final int maxLabIa = widget.subjectData['maxLabIa'] ?? 10;
+    final bool showLabColumn = iaRule == 'BEST_2_OF_3_AVG';
 
     final List<String> headers = [
       'SL',
@@ -720,6 +797,8 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
       'IA 2\n(/$maxIA)',
       'IA 3\n(/$maxIA)',
       '$projAssignHeader\n(/$maxProjAssign)',
+      if (showLabColumn) 'Lab CE\n(/$maxLab)',
+      if (showLabColumn) 'Lab IA\n(/$maxLabIa)',
       'IA Final\n(/50)',
     ];
 
@@ -730,6 +809,7 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
       String ia2Text = studentMark.controllers['ia_2']!.text;
       String ia3Text = studentMark.controllers['ia_3']!.text;
       String projText = studentMark.controllers['projectOrAssignment']!.text;
+      String labText = studentMark.controllers['labMarks']?.text ?? '';
 
       return [
         (index + 1).toString(),
@@ -739,6 +819,8 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
         ia2Text.isEmpty ? '-' : ia2Text,
         ia3Text.isEmpty ? '-' : ia3Text,
         projText.isEmpty ? '-' : projText,
+        if (showLabColumn) (labText.isEmpty ? '-' : labText),
+        if (showLabColumn) (studentMark.controllers['labIaMarks']?.text.isEmpty ?? true ? '-' : studentMark.controllers['labIaMarks']!.text),
         studentMark.calculatedIaFinal?.toStringAsFixed(1) ?? '-',
       ];
     }).toList();
@@ -807,6 +889,8 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
                 5: pw.Alignment.center,
                 6: pw.Alignment.center,
                 7: pw.Alignment.center,
+                if (showLabColumn) 8: pw.Alignment.center,
+                if (showLabColumn) 9: pw.Alignment.center,
               },
               columnWidths: {
                 0: const pw.FixedColumnWidth(25),
@@ -815,8 +899,10 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
                 3: const pw.FixedColumnWidth(45),
                 4: const pw.FixedColumnWidth(45),
                 5: const pw.FixedColumnWidth(45),
-                6: const pw.FixedColumnWidth(55),
-                7: const pw.FixedColumnWidth(55),
+                6: const pw.FixedColumnWidth(45),
+                7: showLabColumn ? const pw.FixedColumnWidth(40) : const pw.FixedColumnWidth(55),
+                if (showLabColumn) 8: const pw.FixedColumnWidth(40),
+                if (showLabColumn) 9: const pw.FixedColumnWidth(55),
               },
             ),
             pw.SizedBox(height: 30),
@@ -872,6 +958,10 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
       maxProjAssign = widget.subjectData['maxAssignment'] ?? 10;
       projAssignLabel = 'Assign';
     }
+    
+    final int maxLab = widget.subjectData['maxLab'] ?? 15;
+    final int maxLabIa = widget.subjectData['maxLabIa'] ?? 10;
+    final bool showLabColumn = iaRule == 'BEST_2_OF_3_AVG';
 
     return Scaffold(
       appBar: AppBar(
@@ -917,23 +1007,33 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
                             const SizedBox(width: 150),
                             _buildAveragePill(
                               'IA 1 Avg',
-                              _classAverages['ia_1']!,
+                              _classAverages['ia_1'] ?? 0.0,
                             ),
                             _buildAveragePill(
                               'IA 2 Avg',
-                              _classAverages['ia_2']!,
+                              _classAverages['ia_2'] ?? 0.0,
                             ),
                             _buildAveragePill(
                               'IA 3 Avg',
-                              _classAverages['ia_3']!,
+                              _classAverages['ia_3'] ?? 0.0,
                             ),
                             _buildAveragePill(
                               '$projAssignLabel Avg',
-                              _classAverages['projectOrAssignment']!,
+                              _classAverages['projectOrAssignment'] ?? 0.0,
                             ),
+                            if (showLabColumn)
+                              _buildAveragePill(
+                                'Lab Avg',
+                                _classAverages['labMarks'] ?? 0.0,
+                              ),
+                            if (showLabColumn)
+                              _buildAveragePill(
+                                'Lab IA Avg',
+                                _classAverages['labIaMarks'] ?? 0.0,
+                              ),
                             _buildAveragePill(
                               'IA Final Avg',
-                              _classAverages['iaFinal']!,
+                              _classAverages['iaFinal'] ?? 0.0,
                             ),
                           ],
                         ),
@@ -996,6 +1096,28 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
                               ),
                             ),
                           ),
+                          if (showLabColumn)
+                            DataColumn(
+                              label: Text(
+                                ' Lab CE\n (/$maxLab)',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ),
+                          if (showLabColumn)
+                            DataColumn(
+                              label: Text(
+                                ' Lab IA\n (/$maxLabIa)',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ),
                           const DataColumn(
                             label: Text(
                               ' IA Final\n (/50)',
@@ -1042,6 +1164,22 @@ class _MarksEntryScreenState extends State<MarksEntryScreen> {
                                   maxProjAssign,
                                 ),
                               ),
+                              if (showLabColumn)
+                                DataCell(
+                                  _buildMarkInput(
+                                    studentMark,
+                                    'labMarks',
+                                    maxLab,
+                                  ),
+                                ),
+                              if (showLabColumn)
+                                DataCell(
+                                  _buildMarkInput(
+                                    studentMark,
+                                    'labIaMarks',
+                                    maxLabIa,
+                                  ),
+                                ),
                               DataCell(
                                 Center(
                                   child: Text(

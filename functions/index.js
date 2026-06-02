@@ -16,7 +16,7 @@ function getVtuGradePoint(marksPercentage) {
 }
 
 // --- IA Internal Marks Calculation (JS Parity with Dart MarkCalculationService) ---
-function calculateIaFinalLocal(ia1, ia2, ia3, projectOrAssignment, subjectData) {
+function calculateIaFinalLocal(ia1, ia2, ia3, projectOrAssignment, labMarks, labIaMarks, subjectData) {
   const rule = subjectData.iaCalculationRule || 'DEFAULT_RULE';
   let finalInternalTotal = 0.0;
   
@@ -24,6 +24,8 @@ function calculateIaFinalLocal(ia1, ia2, ia3, projectOrAssignment, subjectData) 
   const ia_2 = ia2 !== undefined && ia2 !== null ? ia2 : 0;
   const ia_3 = ia3 !== undefined && ia3 !== null ? ia3 : 0;
   const projAssignMarks = projectOrAssignment !== undefined && projectOrAssignment !== null ? projectOrAssignment : 0;
+  const lab = labMarks !== undefined && labMarks !== null ? labMarks : 0;
+  const labIa = labIaMarks !== undefined && labIaMarks !== null ? labIaMarks : 0;
 
   switch (rule) {
     case "SEM_5_6_SCHEMA": { // IAs (40) -> 25 + Proj (25) = 50
@@ -42,16 +44,22 @@ function calculateIaFinalLocal(ia1, ia2, ia3, projectOrAssignment, subjectData) 
       finalInternalTotal = roundedReducedIA + projAssignMarks;
       break;
     }
-    case "BEST_2_OF_3_AVG": { // IAs (25) -> 15 + Assign (10) + Lab (15) = 40
+    case "BEST_2_OF_3_AVG": { // IAs (40) -> 15 + Assign (10) + Lab CE (15) + Lab IA (10) = 50
       const internals = [ia_1, ia_2, ia_3].sort((a, b) => b - a);
-      const best2Avg = (internals[0] + internals[1]) / 2.0;
-      const baseMax = subjectData.baseInternalMax || 25;
-      const targetMax = subjectData.maxInternalTotal || 15;
-      const assignMax = subjectData.maxAssignment || 10;
+      const sumBest2 = internals[0] + internals[1];
+      const reducedInternalValue = (sumBest2 / 80.0) * 15.0;
+      const roundedReducedIA = Math.ceil(reducedInternalValue);
       
-      const reducedInternalValue = (best2Avg / baseMax) * targetMax;
+      const assignMax = subjectData.maxAssignment || 10;
       const assignMarks = Math.min(Math.max(projAssignMarks, 0), assignMax);
-      finalInternalTotal = reducedInternalValue + assignMarks;
+      
+      const maxLab = subjectData.maxLab || 15;
+      const labValue = Math.min(Math.max(lab, 0), maxLab);
+
+      const maxLabIa = subjectData.maxLabIa || 10;
+      const labIaValue = Math.min(Math.max(labIa, 0), maxLabIa);
+
+      finalInternalTotal = roundedReducedIA + assignMarks + labValue + labIaValue;
       break;
     }
     default:
@@ -131,7 +139,9 @@ exports.calculateInternalMarks = functions.firestore
         beforeData.ia_1 === afterData.ia_1 &&
         beforeData.ia_2 === afterData.ia_2 &&
         beforeData.ia_3 === afterData.ia_3 &&
-        beforeData.projectOrAssignment === afterData.projectOrAssignment
+        beforeData.projectOrAssignment === afterData.projectOrAssignment &&
+        beforeData.labMarks === afterData.labMarks &&
+        beforeData.labIaMarks === afterData.labIaMarks
       );
       if (iaFieldsSame) {
         console.log(`IA input fields unchanged for ${markId}. Skipping recalculation.`);
@@ -145,6 +155,8 @@ exports.calculateInternalMarks = functions.firestore
       afterData.ia_2,
       afterData.ia_3,
       afterData.projectOrAssignment,
+      afterData.labMarks,
+      afterData.labIaMarks,
       subjectData
     );
 

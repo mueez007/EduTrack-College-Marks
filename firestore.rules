@@ -121,6 +121,14 @@ service cloud.firestore {
         allow write: if isFaculty();
       }
 
+      // --- Attendance Edit Audit Trail ---
+      // Logs every time a teacher undoes/reduces a student's absent count
+      // with a mandatory reason (e.g., student had permission for hackathon)
+      match /attendance_edits/{editId} {
+        allow read: if isAuthenticated();
+        allow write: if isFaculty();
+      }
+
       // --- User Metadata (department-scoped) ---
       // Faculty writes student user docs during USN-based login
       match /users/{userId} {

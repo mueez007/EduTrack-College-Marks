@@ -19,13 +19,12 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
 
   // --- Maps for Dropdowns (IA and Final Exam Rules) ---
   final Map<String, String> _iaRuleOptions = {
-    'SEM_5_6_SCHEMA': 'Best 2/3 (40) + Proj/Assign (25) -> 50 IA Total', 
-    'SEM_SPECIAL_100_MARK_SCHEMA': 'Best 2/3 (30) to 25 + Proj (25) -> 50 IA Total (Special Subject)', 
-    'BEST_2_OF_3_AVG': 'Best 2/3 (25) + Assign (10) + Lab (15) -> 40 IA Total',
+    'SEM_5_6_SCHEMA': 'Best 2/3 (40) to 25 + Proj/Assign (25) -> 50 IA Total', 
+    'SEM_SPECIAL_100_MARK_SCHEMA': 'Best 2/3 (30) to 25 + Proj (25) -> 50 IA Total', 
+    'BEST_2_OF_3_AVG': 'Written IA (15) + Assign (10) + Lab CE (15) + Lab IA (10) -> 50 IA Total',
   };
 
    final Map<String, String> _finalExamRuleOptions = {
-    'HUNDRED_REDUCED_TO_FIFTY': 'Exam (100)/2 + IA (50)', 
     'FIFTY_FIFTY_RAW': 'Exam (50) + IA (50)', 
   };
   // --- End of Maps ---
@@ -202,25 +201,25 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
                       int maxProject = 0;
                       int maxAssignment = 0;
                       int maxLab = 0;
+                      int maxLabIa = 0;
                       int maxExamInput = 100;
 
                       // Logic based on IA Rule
                       if (iaRule == 'SEM_5_6_SCHEMA') {
-                          maxProject = 25;
+                          baseInternalMax = 40;
+                          maxProject = 25; 
                       } else if (iaRule == 'SEM_SPECIAL_100_MARK_SCHEMA') { 
                           baseInternalMax = 30; 
                           maxProject = 25; 
                       } else if (iaRule == 'BEST_2_OF_3_AVG') {
-                          baseInternalMax = 25; 
+                          baseInternalMax = 40; 
                           maxAssignment = 10;
                           maxLab = 15;
+                          maxLabIa = 10;
                       }
                       
                       // Logic based on Final Exam Rule (overrides total if 30-mark subject)
-                      if (finalExamRule == 'HUNDRED_REDUCED_TO_FIFTY') {
-                          maxExamInput = 100; // Input is 100, output is 50
-                          maxExamTotal = 50;
-                      } else if (finalExamRule == 'FIFTY_FIFTY_RAW') {
+                      if (finalExamRule == 'FIFTY_FIFTY_RAW') {
                           maxExamInput = 50; // Input is 50, output is 50
                           maxExamTotal = 50;
                       } else if (finalExamRule == 'THIRTY_THIRTY_RAW') {
@@ -246,6 +245,7 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
                           'maxProject': maxProject, 
                           'maxAssignment': maxAssignment, 
                           'maxLab': maxLab, 
+                          'maxLabIa': maxLabIa,
                           'maxExamInput': maxExamInput, 
                           'createdAt': FieldValue.serverTimestamp(),
                         };
@@ -291,8 +291,8 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
     final formKey = GlobalKey<FormState>();
     bool isSaving = false;
 
-    String? dialogSelectedIaRule = existingData['iaCalculationRule'] ?? _iaRuleOptions.keys.first;
-    String? dialogSelectedFinalExamRule = existingData['finalExamRule'] ?? _finalExamRuleOptions.keys.first;
+    String? dialogSelectedIaRule = _iaRuleOptions.containsKey(existingData['iaCalculationRule']) ? existingData['iaCalculationRule'] : (_iaRuleOptions.isNotEmpty ? _iaRuleOptions.keys.first : null);
+    String? dialogSelectedFinalExamRule = _finalExamRuleOptions.containsKey(existingData['finalExamRule']) ? existingData['finalExamRule'] : (_finalExamRuleOptions.isNotEmpty ? _finalExamRuleOptions.keys.first : null);
 
     showDialog(
       context: context,
@@ -389,23 +389,23 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
                       int maxProject = 0;
                       int maxAssignment = 0;
                       int maxLab = 0;
+                      int maxLabIa = 0;
                       int maxExamInput = 100;
 
                       if (iaRule == 'SEM_5_6_SCHEMA') {
+                        baseInternalMax = 40;
                         maxProject = 25;
                       } else if (iaRule == 'SEM_SPECIAL_100_MARK_SCHEMA') {
                         baseInternalMax = 30;
                         maxProject = 25;
                       } else if (iaRule == 'BEST_2_OF_3_AVG') {
-                        baseInternalMax = 25;
+                        baseInternalMax = 40;
                         maxAssignment = 10;
                         maxLab = 15;
+                        maxLabIa = 10;
                       }
 
-                      if (finalExamRule == 'HUNDRED_REDUCED_TO_FIFTY') {
-                        maxExamInput = 100;
-                        maxExamTotal = 50;
-                      } else if (finalExamRule == 'FIFTY_FIFTY_RAW') {
+                      if (finalExamRule == 'FIFTY_FIFTY_RAW') {
                         maxExamInput = 50;
                         maxExamTotal = 50;
                       } else if (finalExamRule == 'THIRTY_THIRTY_RAW') {
@@ -430,6 +430,7 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
                           'maxProject': maxProject,
                           'maxAssignment': maxAssignment,
                           'maxLab': maxLab,
+                          'maxLabIa': maxLabIa,
                           'maxExamInput': maxExamInput,
                           'updatedAt': FieldValue.serverTimestamp(),
                         });

@@ -262,7 +262,7 @@ class _FinalExamMarksScreenState extends State<FinalExamMarksScreen> {
     if (subjectData == null) return;
 
     int? examMark = int.tryParse(subjectData.controller.text);
-    int maxExamMark = subjectData.subjectDataMap['maxExamFinal'] ?? 100;
+    int maxExamMark = subjectData.subjectDataMap['maxExamInput'] ?? 100;
 
     // Validate input range
     if (examMark != null && (examMark < 0 || examMark > maxExamMark)) {
@@ -365,7 +365,7 @@ class _FinalExamMarksScreenState extends State<FinalExamMarksScreen> {
     final subjectData = studentModel.subjectMarks[subjectId];
     if (subjectData == null) return const SizedBox(width: 60);
 
-    int maxExamMark = subjectData.subjectDataMap['maxExamFinal'] ?? 100;
+    int maxExamMark = subjectData.subjectDataMap['maxExamInput'] ?? 100;
 
     return SizedBox(
       width: 65,

@@ -5,8 +5,10 @@ class MarkCalculationService {
   double calculateIaFinalLocal({
       required int? ia1,
       required int? ia2,
-      required int? ia3,
-      required int? projectOrAssignment,
+      int? ia3,
+      int? projectOrAssignment,
+      int? labMarks,
+      int? labIaMarks,
       required Map<String, dynamic> subjectData,
   }) {
     final String rule = subjectData['iaCalculationRule'] ?? 'DEFAULT_RULE';
@@ -38,20 +40,25 @@ class MarkCalculationService {
         finalInternalTotal = (roundedReducedIA + projAssignMarks).toDouble();
         break;
 
-      case "BEST_2_OF_3_AVG": // IAs (25) -> 15 + Assign (10) + Lab (15) = 40
+      case "BEST_2_OF_3_AVG": // IAs (40) -> 15 + Assign (10) + Lab CE (15) + Lab IA (10) = 50
         final internals = [ia1 ?? 0, ia2 ?? 0, ia3 ?? 0];
         internals.sort((a, b) => b - a); 
-        final double best2Avg = (internals[0] + internals[1]) / 2.0;
+        final int sumBest2 = internals[0] + internals[1];
 
-        final int baseMax = subjectData['baseInternalMax'] ?? 25;
-        final int targetMax = subjectData['maxInternalTotal'] ?? 15; 
+        // Scale best 2 out of 80 down to 15
+        reducedInternalValue = (sumBest2 / 80.0) * 15.0;
+        roundedReducedIA = reducedInternalValue.ceil();
+
         final int assignMax = subjectData['maxAssignment'] ?? 10;
+        final int assignMarks = (projAssignMarks ?? 0).clamp(0, assignMax);
         
-        reducedInternalValue = (best2Avg / baseMax) * targetMax;
-        final int assignMarks = (projAssignMarks).clamp(0, assignMax);
-        final int labMarks = 0; 
+        final int maxLab = subjectData['maxLab'] ?? 15;
+        final int labValue = (labMarks ?? 0).clamp(0, maxLab);
 
-        finalInternalTotal = reducedInternalValue + assignMarks + labMarks; 
+        final int maxLabIa = subjectData['maxLabIa'] ?? 10;
+        final int labIaValue = (labIaMarks ?? 0).clamp(0, maxLabIa);
+        
+        finalInternalTotal = (roundedReducedIA + assignMarks + labValue + labIaValue).toDouble(); 
         break;
 
       default:

@@ -9,6 +9,8 @@ class StudentMarkModel {
   final int? ia2;
   final int? ia3;
   final int? projectOrAssignment;
+  final int? labMarks;
+  final int? labIaMarks;
   final double? calculatedIaFinal; // Store the calculated result
   final Map<String, TextEditingController> controllers; // Controllers for input
   final Map<String, dynamic> subjectData; // Rules and max marks for calculation
@@ -22,6 +24,8 @@ class StudentMarkModel {
     this.ia2,
     this.ia3,
     this.projectOrAssignment,
+    this.labMarks,
+    this.labIaMarks,
     this.calculatedIaFinal,
     required this.controllers,
     required this.subjectData,
@@ -34,6 +38,8 @@ class StudentMarkModel {
     int? ia2,
     int? ia3,
     int? projectOrAssignment,
+    int? labMarks,
+    int? labIaMarks,
     double? calculatedIaFinal,
   }) {
     return StudentMarkModel(
@@ -44,6 +50,8 @@ class StudentMarkModel {
       ia2: ia2 ?? this.ia2,
       ia3: ia3 ?? this.ia3,
       projectOrAssignment: projectOrAssignment ?? this.projectOrAssignment,
+      labMarks: labMarks ?? this.labMarks,
+      labIaMarks: labIaMarks ?? this.labIaMarks,
       calculatedIaFinal: calculatedIaFinal ?? this.calculatedIaFinal,
       controllers: controllers, // Controllers are mutable, reference stays same
       subjectData: subjectData,

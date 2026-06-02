@@ -8,6 +8,7 @@ import 'package:printing/printing.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 import '../../providers/app_state.dart';
 import '../../services/firestore_helper.dart';
@@ -34,6 +35,7 @@ class _DailyAbsenteeScreenState extends State<DailyAbsenteeScreen> {
   bool _isSaving = false;
   bool _isExporting = false;
   bool _isExportingDatewise = false;
+  bool _isExportingEditLog = false;
 
   @override
   void initState() {
@@ -344,6 +346,60 @@ class _DailyAbsenteeScreenState extends State<DailyAbsenteeScreen> {
     }).toList();
   }
 
+  Future<List<QueryDocumentSnapshot>> _loadOverallAbsenteeDocs() async {
+    final deptId = Provider.of<AppState>(context, listen: false).departmentId;
+    if (deptId == null) return [];
+    final QuerySnapshot snapshot = await FirestoreHelper.deptCollection(deptId, 'absentees')
+        .where('batchYear', isEqualTo: _selectedBatchId)
+        .where('semester', isEqualTo: _selectedSemester)
+        .where('subjectId', isEqualTo: _selectedSubjectId)
+        .get();
+
+    return snapshot.docs;
+  }
+
+  Future<List<AttendanceReportRow>> _buildOverallAttendanceRows() async {
+    if (_selectedBatchId == null || _selectedSubjectId == null) {
+      return <AttendanceReportRow>[];
+    }
+    final List<QueryDocumentSnapshot> absenteeDocs =
+        await _loadOverallAbsenteeDocs();
+
+    int totalClasses = 0;
+    final Map<String, int> absentCounts = <String, int>{};
+    for (final doc in absenteeDocs) {
+      final data = doc.data() as Map<String, dynamic>;
+      final int classCount = (data['classCount'] is int)
+          ? data['classCount'] as int
+          : 1;
+      final int normalizedClassCount = classCount < 1 ? 1 : classCount;
+      totalClasses += normalizedClassCount;
+      final Map<String, int> dayAbsentCounts = _parseAbsentClassCountsFromDoc(
+        data,
+        defaultClassCount: normalizedClassCount,
+      );
+      for (final entry in dayAbsentCounts.entries) {
+        if (entry.value > 0) {
+          absentCounts[entry.key] = (absentCounts[entry.key] ?? 0) + entry.value;
+        }
+      }
+    }
+
+    return _students.map((student) {
+      final int absentClasses = absentCounts[student.id] ?? 0;
+      final int attendedClasses = totalClasses - absentClasses;
+      final double percentage =
+          totalClasses == 0 ? 100 : (attendedClasses / totalClasses) * 100;
+      return AttendanceReportRow(
+        usn: student.usn,
+        name: student.name,
+        attendedClasses: attendedClasses,
+        totalClasses: totalClasses,
+        percentage: double.parse(percentage.toStringAsFixed(2)),
+      );
+    }).toList();
+  }
+
   Future<void> _exportAttendanceReport() async {
     if (_selectedSubjectId == null || _students.isEmpty) {
       _showError('No data available to export');
@@ -354,8 +410,7 @@ class _DailyAbsenteeScreenState extends State<DailyAbsenteeScreen> {
       final batchName =
           Provider.of<AppState>(context, listen: false).selectedBatchName ?? '';
       final subject = _subjects.firstWhere((s) => s.id == _selectedSubjectId);
-      final rows = await _buildMonthlyAttendanceRows();
-      final monthLabel = DateFormat('MMMM yyyy').format(_selectedDate);
+      final rows = await _buildOverallAttendanceRows();
 
       final doc = pw.Document();
       doc.addPage(
@@ -363,7 +418,7 @@ class _DailyAbsenteeScreenState extends State<DailyAbsenteeScreen> {
           pageFormat: PdfPageFormat.a4,
           margin: const pw.EdgeInsets.all(24),
           header: (_) => pw.Text(
-            'Attendance Report - ${subject.code} (${subject.name})',
+            'Overall Attendance Report - ${subject.code} (${subject.name})',
             style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold),
           ),
           footer: (ctx) => pw.Align(
@@ -375,7 +430,7 @@ class _DailyAbsenteeScreenState extends State<DailyAbsenteeScreen> {
           ),
           build: (_) => [
             pw.Text('Batch: $batchName | Semester: $_selectedSemester'),
-            pw.Text('Month: $monthLabel'),
+            pw.Text('Report Type: Overall (All Months)'),
             pw.SizedBox(height: 12),
             pw.TableHelper.fromTextArray(
               headers: const <String>[
@@ -424,7 +479,7 @@ class _DailyAbsenteeScreenState extends State<DailyAbsenteeScreen> {
       await Share.shareXFiles(
         [XFile(csvFile.path)],
         text:
-            'Attendance report (${subject.code}) for $monthLabel. CSV is Excel-compatible.',
+            'Overall Attendance report (${subject.code}). CSV is Excel-compatible.',
       );
 
       if (!mounted) return;
@@ -736,7 +791,15 @@ class _DailyAbsenteeScreenState extends State<DailyAbsenteeScreen> {
   }
 
   void _setAbsentClassesForStudent(String studentId, int count) {
+    final int currentAbsent = _absentClassCounts[studentId] ?? 0;
     final int normalized = count.clamp(0, _classCount);
+
+    // If reducing absences, require a mandatory reason
+    if (normalized < currentAbsent) {
+      _showUndoReasonDialog(studentId, currentAbsent, normalized);
+      return;
+    }
+
     setState(() {
       if (normalized == 0) {
         _absentClassCounts.remove(studentId);
@@ -744,6 +807,366 @@ class _DailyAbsenteeScreenState extends State<DailyAbsenteeScreen> {
         _absentClassCounts[studentId] = normalized;
       }
     });
+  }
+
+  Future<void> _showUndoReasonDialog(String studentId, int oldCount, int newCount) async {
+    final student = _students.firstWhere((s) => s.id == studentId);
+    final reasonController = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.orange.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(Icons.edit_note, color: Colors.orange, size: 24),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(child: Text('Reason Required')),
+          ],
+        ),
+        content: Form(
+          key: formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade50,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.grey.shade200),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(student.name, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
+                    const SizedBox(height: 2),
+                    Text('USN: ${student.usn}', style: TextStyle(fontSize: 13, color: Colors.grey[600])),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: Colors.red.shade50,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text('Absent: $oldCount', style: TextStyle(color: Colors.red.shade700, fontSize: 13, fontWeight: FontWeight.w600)),
+                        ),
+                        const Padding(
+                          padding: EdgeInsets.symmetric(horizontal: 8),
+                          child: Icon(Icons.arrow_forward, size: 16, color: Colors.grey),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: newCount == 0 ? Colors.green.shade50 : Colors.orange.shade50,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            newCount == 0 ? 'Present' : 'Absent: $newCount',
+                            style: TextStyle(
+                              color: newCount == 0 ? Colors.green.shade700 : Colors.orange.shade700,
+                              fontSize: 13, fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text('Why is this absence being removed?',
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: Colors.grey[700])),
+              const SizedBox(height: 8),
+              TextFormField(
+                controller: reasonController,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  hintText: 'e.g., Student attended hackathon with permission',
+                  border: OutlineInputBorder(),
+                ),
+                validator: (value) {
+                  if (value == null || value.trim().isEmpty) {
+                    return 'Reason is required to undo absence';
+                  }
+                  return null;
+                },
+                autofocus: true,
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton.icon(
+            icon: const Icon(Icons.check, size: 18),
+            label: const Text('Confirm Undo'),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+            onPressed: () {
+              if (formKey.currentState!.validate()) {
+                Navigator.pop(ctx, true);
+              }
+            },
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    final reason = reasonController.text.trim();
+
+    // Update local state
+    setState(() {
+      if (newCount == 0) {
+        _absentClassCounts.remove(studentId);
+      } else {
+        _absentClassCounts[studentId] = newCount;
+      }
+    });
+
+    // Save audit trail to Firestore
+    await _saveAttendanceEdit(
+      student: student,
+      oldCount: oldCount,
+      newCount: newCount,
+      reason: reason,
+    );
+  }
+
+  Future<void> _saveAttendanceEdit({
+    required StudentModel student,
+    required int oldCount,
+    required int newCount,
+    required String reason,
+  }) async {
+    try {
+      final deptId = Provider.of<AppState>(context, listen: false).departmentId;
+      final userEmail = Provider.of<AppState>(context, listen: false).userEmail;
+      if (deptId == null || _selectedSubjectId == null) return;
+
+      final subject = _subjects.firstWhere((s) => s.id == _selectedSubjectId);
+      final dateStr = DateFormat('yyyy-MM-dd').format(_selectedDate);
+
+      await FirestoreHelper.deptCollection(deptId, 'attendance_edits').add({
+        'studentId': student.id,
+        'studentName': student.name,
+        'usn': student.usn,
+        'subjectId': _selectedSubjectId,
+        'subjectCode': subject.code,
+        'subjectName': subject.name,
+        'batchYear': _selectedBatchId,
+        'semester': _selectedSemester,
+        'absentDate': dateStr,
+        'undoDate': DateFormat('yyyy-MM-dd').format(DateTime.now()),
+        'undoTimestamp': FieldValue.serverTimestamp(),
+        'previousAbsentCount': oldCount,
+        'newAbsentCount': newCount,
+        'reason': reason,
+        'editedBy': userEmail ?? 'unknown',
+      });
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Absence updated for ${student.name}. Reason logged.'),
+          backgroundColor: Colors.orange,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    } catch (e) {
+      debugPrint('Error saving attendance edit: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Edit saved locally but audit log failed: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  Future<void> _exportEditLogReport() async {
+    if (_selectedSubjectId == null || _selectedBatchId == null) {
+      _showError('Please select a subject and batch');
+      return;
+    }
+    setState(() => _isExportingEditLog = true);
+
+    try {
+      final deptId = Provider.of<AppState>(context, listen: false).departmentId;
+      if (deptId == null) return;
+
+      final batchName = Provider.of<AppState>(context, listen: false).selectedBatchName ?? '';
+      final subject = _subjects.firstWhere((s) => s.id == _selectedSubjectId);
+      final int month = _selectedDate.month;
+      final int year = _selectedDate.year;
+      final monthLabel = DateFormat('MMMM yyyy').format(_selectedDate);
+
+      // Query edit logs for this batch + semester + subject within the selected month
+      final DateTime monthStart = DateTime(year, month, 1);
+      final DateTime monthEnd = DateTime(year, month + 1, 1);
+
+      final querySnapshot = await FirestoreHelper.deptCollection(deptId, 'attendance_edits')
+          .where('batchYear', isEqualTo: _selectedBatchId)
+          .where('semester', isEqualTo: _selectedSemester)
+          .where('subjectId', isEqualTo: _selectedSubjectId)
+          .orderBy('undoTimestamp', descending: true)
+          .get();
+
+      // Filter by month in Dart (avoids complex composite index)
+      final edits = querySnapshot.docs.where((doc) {
+        final data = doc.data() as Map<String, dynamic>;
+        final undoDate = data['undoDate'] as String? ?? '';
+        if (undoDate.isEmpty) return false;
+        try {
+          final dt = DateTime.parse(undoDate);
+          return dt.isAfter(monthStart.subtract(const Duration(days: 1))) && dt.isBefore(monthEnd);
+        } catch (_) {
+          return false;
+        }
+      }).toList();
+
+      if (edits.isEmpty) {
+        if (!mounted) return;
+        _showError('No attendance edits found for $monthLabel');
+        setState(() => _isExportingEditLog = false);
+        return;
+      }
+
+      // Build PDF
+      final pdf = pw.Document();
+      final List<List<String>> dataRows = edits.map((doc) {
+        final data = doc.data() as Map<String, dynamic>;
+        final absentDate = data['absentDate'] ?? '';
+        final undoDate = data['undoDate'] ?? '';
+        // Format dates nicely
+        String fmtAbsent = absentDate;
+        String fmtUndo = undoDate;
+        try {
+          fmtAbsent = DateFormat('dd/MM/yyyy').format(DateTime.parse(absentDate));
+        } catch (_) {}
+        try {
+          fmtUndo = DateFormat('dd/MM/yyyy').format(DateTime.parse(undoDate));
+        } catch (_) {}
+
+        return <String>[
+          data['studentName'] ?? '',
+          data['usn'] ?? '',
+          fmtAbsent,
+          fmtUndo,
+          '${data['previousAbsentCount'] ?? '?'} -> ${data['newAbsentCount'] ?? '?'}',
+          data['reason'] ?? '',
+          data['editedBy'] ?? '',
+        ];
+      }).toList();
+
+      pdf.addPage(
+        pw.MultiPage(
+          pageFormat: PdfPageFormat.a4.landscape,
+          margin: const pw.EdgeInsets.all(20),
+          header: (_) => pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Text(
+                'Attendance Edit Log',
+                style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold),
+              ),
+              pw.SizedBox(height: 2),
+              pw.Text(
+                '${subject.code} - ${subject.name}  |  Batch: $batchName  |  '
+                'Sem: $_selectedSemester  |  Month: $monthLabel',
+                style: const pw.TextStyle(fontSize: 10),
+              ),
+              pw.SizedBox(height: 8),
+            ],
+          ),
+          footer: (ctx) => pw.Align(
+            alignment: pw.Alignment.centerRight,
+            child: pw.Text(
+              'Page ${ctx.pageNumber} of ${ctx.pagesCount}',
+              style: const pw.TextStyle(fontSize: 8),
+            ),
+          ),
+          build: (_) => [
+            pw.TableHelper.fromTextArray(
+              headers: const [
+                'Student Name',
+                'USN',
+                'Absent Date',
+                'Undo Date',
+                'Change',
+                'Reason',
+                'Edited By',
+              ],
+              data: dataRows,
+              cellStyle: const pw.TextStyle(fontSize: 8),
+              headerStyle: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold),
+              cellAlignment: pw.Alignment.centerLeft,
+              headerDecoration: const pw.BoxDecoration(color: PdfColors.orange100),
+              columnWidths: {
+                0: const pw.FlexColumnWidth(2),
+                1: const pw.FlexColumnWidth(1.5),
+                2: const pw.FlexColumnWidth(1.2),
+                3: const pw.FlexColumnWidth(1.2),
+                4: const pw.FlexColumnWidth(1),
+                5: const pw.FlexColumnWidth(3),
+                6: const pw.FlexColumnWidth(2),
+              },
+            ),
+          ],
+        ),
+      );
+
+      await Printing.layoutPdf(
+        onLayout: (PdfPageFormat format) async => pdf.save(),
+      );
+
+      // Also share as CSV
+      final csvBuf = StringBuffer();
+      csvBuf.writeln('Student Name,USN,Absent Date,Undo Date,Change,Reason,Edited By');
+      for (final row in dataRows) {
+        csvBuf.writeln(row.map(_csvField).join(','));
+      }
+
+      if (!kIsWeb) {
+        final tempDir = await getTemporaryDirectory();
+        final ts = DateFormat('yyyyMMdd_HHmmss').format(DateTime.now());
+        final csvFile = File('${tempDir.path}/edit_log_${subject.code}_$ts.csv');
+        await csvFile.writeAsString(csvBuf.toString());
+        await Share.shareXFiles(
+          [XFile(csvFile.path)],
+          text: 'Attendance edit log (${subject.code}) $monthLabel.',
+        );
+      }
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Edit log exported: PDF + CSV'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      _showError('Failed to export edit log: $e');
+    } finally {
+      if (mounted) setState(() => _isExportingEditLog = false);
+    }
   }
 
   Map<String, int> _parseAbsentClassCountsFromDoc(
@@ -1019,6 +1442,33 @@ class _DailyAbsenteeScreenState extends State<DailyAbsenteeScreen> {
                         ),
                       ),
                     ],
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      icon: _isExportingEditLog
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(Icons.history, size: 18),
+                      label: Text(
+                        _isExportingEditLog ? 'Exporting...' : 'Edit Log (Undo Report)',
+                      ),
+                      onPressed: _isExportingEditLog || _isLoading
+                          ? null
+                          : _exportEditLogReport,
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        backgroundColor: Colors.orange.shade700,
+                        foregroundColor: Colors.white,
+                      ),
+                    ),
                   ),
                   if (_getAbsentStudentCount() > 0)
                     Padding(
