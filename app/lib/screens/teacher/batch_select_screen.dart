@@ -42,6 +42,16 @@ class _BatchSelectScreenState extends State<BatchSelectScreen> {
     });
     debugPrint("Selected Batch ID: $batchId, Name: $batchName");
     Provider.of<AppState>(context, listen: false).setSelectedBatch(batchId, batchName);
+    
+    // Save to Firestore to survive local storage wipes
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser != null) {
+      FirebaseFirestore.instance.collection('users').doc(currentUser.uid).set({
+        'lastSelectedBatchId': batchId,
+        'lastSelectedBatchName': batchName,
+      }, SetOptions(merge: true));
+    }
+
     Navigator.pushReplacement(context,
       MaterialPageRoute(builder: (context) => const TeacherHomeScreen()));
   }

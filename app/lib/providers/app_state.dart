@@ -36,20 +36,18 @@ class AppState with ChangeNotifier {
 
   /// Initialize from persisted storage. Call once on app startup.
   Future<void> init() async {
-    try {
-      final prefs = SharedPreferencesAsync();
-      _selectedBatchId = await prefs.getString(_keyBatchId);
-      _selectedBatchName = await prefs.getString(_keyBatchName);
-      _departmentId = await prefs.getString(_keyDeptId);
-      _departmentName = await prefs.getString(_keyDeptName);
-      _isAdmin = (await prefs.getBool(_keyIsAdmin)) ?? false;
-      _userEmail = await prefs.getString(_keyUserEmail);
-      _userRole = await prefs.getString(_keyUserRole);
-      _studentUsn = await prefs.getString(_keyStudentUsn);
-      debugPrint("AppState Restored: role=$_userRole, dept=$_departmentId, batch=$_selectedBatchId");
-    } catch (e) {
-      debugPrint("AppState init error (starting fresh): $e");
-    }
+    final prefs = SharedPreferencesAsync();
+    
+    try { _selectedBatchId = await prefs.getString(_keyBatchId); } catch (e) { debugPrint('Error reading batchId: $e'); }
+    try { _selectedBatchName = await prefs.getString(_keyBatchName); } catch (e) { debugPrint('Error reading batchName: $e'); }
+    try { _departmentId = await prefs.getString(_keyDeptId); } catch (e) { debugPrint('Error reading deptId: $e'); }
+    try { _departmentName = await prefs.getString(_keyDeptName); } catch (e) { debugPrint('Error reading deptName: $e'); }
+    try { _isAdmin = (await prefs.getBool(_keyIsAdmin)) ?? false; } catch (e) { debugPrint('Error reading isAdmin: $e'); }
+    try { _userEmail = await prefs.getString(_keyUserEmail); } catch (e) { debugPrint('Error reading email: $e'); }
+    try { _userRole = await prefs.getString(_keyUserRole); } catch (e) { debugPrint('Error reading role: $e'); }
+    try { _studentUsn = await prefs.getString(_keyStudentUsn); } catch (e) { debugPrint('Error reading studentUsn: $e'); }
+    
+    debugPrint("AppState Restored: role=$_userRole, dept=$_departmentId, batch=$_selectedBatchId");
     notifyListeners();
   }
 

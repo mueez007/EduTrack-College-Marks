@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../config/app_theme.dart';
 import '../providers/app_state.dart';
 import 'login_screen.dart';
@@ -53,13 +55,50 @@ class _SplashScreenState extends State<SplashScreen>
     _fadeController.forward();
 
     // Navigate after splash delay
-    Future.delayed(const Duration(milliseconds: 3000), () {
-      if (mounted) _navigateBasedOnSession();
+    Future.delayed(const Duration(milliseconds: 3000), () async {
+      if (mounted) await _navigateBasedOnSession();
     });
   }
 
-  void _navigateBasedOnSession() {
+  Future<void> _navigateBasedOnSession() async {
     final appState = Provider.of<AppState>(context, listen: false);
+
+    // --- FIREBASE AUTH RECOVERY ---
+    // If SharedPreferences fails to persist on Web refresh, but Firebase Auth is alive,
+    // we recover the session securely from Firestore!
+    if (!appState.isLoggedIn) {
+      final currentUser = FirebaseAuth.instance.currentUser;
+      if (currentUser != null) {
+        debugPrint("Splash: Recovering session from Firebase Auth...");
+        try {
+          final userDoc = await FirebaseFirestore.instance.collection('users').doc(currentUser.uid).get();
+          if (userDoc.exists) {
+            final data = userDoc.data() as Map<String, dynamic>;
+            appState.setUserRole(data['role']);
+            appState.setUserEmail(data['email'] ?? currentUser.email);
+            if (data['role'] == 'admin' || data['role'] == 'faculty') {
+              if (data['departmentId'] != null) {
+                appState.setDepartment(data['departmentId'], data['departmentId']);
+              }
+              if (data['lastSelectedBatchId'] != null) {
+                appState.setSelectedBatch(
+                  data['lastSelectedBatchId'], 
+                  data['lastSelectedBatchName'] ?? data['lastSelectedBatchId']
+                );
+              }
+              if (data['role'] == 'admin') {
+                appState.setAdminMode(true);
+              }
+            }
+          }
+        } catch (e) {
+          debugPrint("Failed to recover session: $e");
+          await FirebaseAuth.instance.signOut();
+        }
+      }
+    }
+
+    if (!mounted) return;
 
     Widget destination;
 
