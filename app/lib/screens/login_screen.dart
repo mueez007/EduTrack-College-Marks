@@ -176,6 +176,7 @@ class _LoginScreenState extends State<LoginScreen>
         if (isValid) {
           Provider.of<AppState>(context, listen: false).setAdminMode(true);
           Provider.of<AppState>(context, listen: false).setUserEmail('admin');
+          Provider.of<AppState>(context, listen: false).setUserRole('admin');
           Navigator.pushReplacement(context, MaterialPageRoute(
             builder: (context) => const AdminDepartmentSelectScreen(),
           ));
@@ -329,6 +330,7 @@ class _LoginScreenState extends State<LoginScreen>
         Provider.of<AppState>(context, listen: false).setDepartment(deptId, deptName);
         Provider.of<AppState>(context, listen: false).setUserEmail(email);
         Provider.of<AppState>(context, listen: false).setAdminMode(false);
+        Provider.of<AppState>(context, listen: false).setUserRole('teacher');
         Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const BatchSelectScreen()));
       }
     } on FirebaseAuthException catch (e) {
@@ -360,6 +362,8 @@ class _LoginScreenState extends State<LoginScreen>
       if (mounted) {
         Provider.of<AppState>(context, listen: false).setDepartment(foundDeptId, foundDeptName!);
         Provider.of<AppState>(context, listen: false).setAdminMode(false);
+        Provider.of<AppState>(context, listen: false).setUserRole('student');
+        Provider.of<AppState>(context, listen: false).setStudentUsn(usn);
         Navigator.pushReplacement(context, MaterialPageRoute(
           builder: (_) => StudentDashboardScreen(usn: usn),
         ));

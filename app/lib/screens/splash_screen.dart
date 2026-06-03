@@ -1,7 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
 import '../config/app_theme.dart';
+import '../providers/app_state.dart';
 import 'login_screen.dart';
+import 'teacher/teacher_home_screen.dart';
+import 'teacher/batch_select_screen.dart';
+import 'admin/admin_department_select_screen.dart';
+import 'student/student_dashboard_screen.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -46,21 +52,45 @@ class _SplashScreenState extends State<SplashScreen>
 
     _fadeController.forward();
 
-    // Navigate to login after 3 seconds
+    // Navigate after splash delay
     Future.delayed(const Duration(milliseconds: 3000), () {
-      if (mounted) {
-        Navigator.pushReplacement(
-          context,
-          PageRouteBuilder(
-            pageBuilder: (_, __, ___) => const LoginScreen(),
-            transitionDuration: const Duration(milliseconds: 600),
-            transitionsBuilder: (_, animation, __, child) {
-              return FadeTransition(opacity: animation, child: child);
-            },
-          ),
-        );
-      }
+      if (mounted) _navigateBasedOnSession();
     });
+  }
+
+  void _navigateBasedOnSession() {
+    final appState = Provider.of<AppState>(context, listen: false);
+
+    Widget destination;
+
+    if (!appState.isLoggedIn) {
+      // No saved session → go to login
+      destination = const LoginScreen();
+    } else if (appState.userRole == 'student') {
+      // Student session → go to dashboard
+      final usn = appState.studentUsn ?? '';
+      destination = StudentDashboardScreen(usn: usn);
+    } else if (appState.userRole == 'admin' && appState.departmentId == null) {
+      // Admin without department selected → department picker
+      destination = const AdminDepartmentSelectScreen();
+    } else if (appState.selectedBatchId == null) {
+      // Teacher/Admin with department but no batch → batch picker
+      destination = const BatchSelectScreen();
+    } else {
+      // Teacher/Admin with department + batch → home
+      destination = const TeacherHomeScreen();
+    }
+
+    Navigator.pushReplacement(
+      context,
+      PageRouteBuilder(
+        pageBuilder: (_, __, ___) => destination,
+        transitionDuration: const Duration(milliseconds: 600),
+        transitionsBuilder: (_, animation, __, child) {
+          return FadeTransition(opacity: animation, child: child);
+        },
+      ),
+    );
   }
 
   @override

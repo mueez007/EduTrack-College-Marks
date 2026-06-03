@@ -20,9 +20,12 @@ void main() async {
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
+  final appState = AppState();
+  await appState.init();
+
   runApp(
-    ChangeNotifierProvider(
-      create: (context) => AppState(),
+    ChangeNotifierProvider.value(
+      value: appState,
       child: const MyApp(),
     ),
   );

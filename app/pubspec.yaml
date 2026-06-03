@@ -41,6 +41,7 @@ dependencies:
   # Google Fonts for professional typography
   google_fonts: ^6.2.1
   crypto: ^3.0.7
+  shared_preferences: ^2.3.0
 
 dev_dependencies:
   flutter_test:
