@@ -22,10 +22,13 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
     'SEM_5_6_SCHEMA': 'Best 2/3 (40) to 25 + Proj/Assign (25) -> 50 IA Total', 
     'SEM_SPECIAL_100_MARK_SCHEMA': 'Best 2/3 (30) to 25 + Proj (25) -> 50 IA Total', 
     'BEST_2_OF_3_AVG': 'Written IA (15) + Assign (10) + Lab CE (15) + Lab IA (10) -> 50 IA Total',
+    'LAB_CE_AND_LAB_IA': 'CE (30) + Lab IA (50→20) -> 50 IA Total (Laboratory)',
+    'NO_IA': 'No IA (Direct Exam Only)',
   };
 
    final Map<String, String> _finalExamRuleOptions = {
     'FIFTY_FIFTY_RAW': 'Exam (50) + IA (50)', 
+    'DIRECT_100_NO_IA': 'Direct 100 Marks (No IA)',
   };
   // --- End of Maps ---
 
@@ -216,6 +219,18 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
                           maxAssignment = 10;
                           maxLab = 15;
                           maxLabIa = 10;
+                      } else if (iaRule == 'LAB_CE_AND_LAB_IA') {
+                          baseInternalMax = 0; // No written IAs
+                          maxProject = 0;
+                          maxAssignment = 30; // CE field (out of 30)
+                          maxLab = 0;
+                          maxLabIa = 50; // Raw Lab IA input (50→20)
+                      } else if (iaRule == 'NO_IA') {
+                          baseInternalMax = 0;
+                          maxProject = 0;
+                          maxAssignment = 0;
+                          maxLab = 0;
+                          maxLabIa = 0;
                       }
                       
                       // Logic based on Final Exam Rule (overrides total if 30-mark subject)
@@ -227,6 +242,11 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
                           maxInternalTotal = 15; // Max IA component is 15
                           maxSubjectTotal = 30; // Total subject mark is 30
                           maxExamInput = 50; // Assume teacher inputs 50 which is scaled down
+                      } else if (finalExamRule == 'DIRECT_100_NO_IA') {
+                          maxExamInput = 100; // Direct 100 marks entry
+                          maxExamTotal = 100;
+                          maxInternalTotal = 0; // No IA component
+                          maxSubjectTotal = 100;
                       }
                       
                       Map<String, dynamic> subjectData = {
@@ -403,6 +423,18 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
                         maxAssignment = 10;
                         maxLab = 15;
                         maxLabIa = 10;
+                      } else if (iaRule == 'LAB_CE_AND_LAB_IA') {
+                        baseInternalMax = 0; // No written IAs
+                        maxProject = 0;
+                        maxAssignment = 30; // CE field (out of 30)
+                        maxLab = 0;
+                        maxLabIa = 50; // Raw Lab IA input (50→20)
+                      } else if (iaRule == 'NO_IA') {
+                        baseInternalMax = 0;
+                        maxProject = 0;
+                        maxAssignment = 0;
+                        maxLab = 0;
+                        maxLabIa = 0;
                       }
 
                       if (finalExamRule == 'FIFTY_FIFTY_RAW') {
@@ -413,6 +445,11 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
                         maxInternalTotal = 15;
                         maxSubjectTotal = 30;
                         maxExamInput = 50;
+                      } else if (finalExamRule == 'DIRECT_100_NO_IA') {
+                        maxExamInput = 100;
+                        maxExamTotal = 100;
+                        maxInternalTotal = 0;
+                        maxSubjectTotal = 100;
                       }
 
                       try {

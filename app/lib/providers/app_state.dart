@@ -36,36 +36,44 @@ class AppState with ChangeNotifier {
 
   /// Initialize from persisted storage. Call once on app startup.
   Future<void> init() async {
-    final prefs = await SharedPreferences.getInstance();
-    _selectedBatchId = prefs.getString(_keyBatchId);
-    _selectedBatchName = prefs.getString(_keyBatchName);
-    _departmentId = prefs.getString(_keyDeptId);
-    _departmentName = prefs.getString(_keyDeptName);
-    _isAdmin = prefs.getBool(_keyIsAdmin) ?? false;
-    _userEmail = prefs.getString(_keyUserEmail);
-    _userRole = prefs.getString(_keyUserRole);
-    _studentUsn = prefs.getString(_keyStudentUsn);
+    try {
+      final prefs = SharedPreferencesAsync();
+      _selectedBatchId = await prefs.getString(_keyBatchId);
+      _selectedBatchName = await prefs.getString(_keyBatchName);
+      _departmentId = await prefs.getString(_keyDeptId);
+      _departmentName = await prefs.getString(_keyDeptName);
+      _isAdmin = (await prefs.getBool(_keyIsAdmin)) ?? false;
+      _userEmail = await prefs.getString(_keyUserEmail);
+      _userRole = await prefs.getString(_keyUserRole);
+      _studentUsn = await prefs.getString(_keyStudentUsn);
+      debugPrint("AppState Restored: role=$_userRole, dept=$_departmentId, batch=$_selectedBatchId");
+    } catch (e) {
+      debugPrint("AppState init error (starting fresh): $e");
+    }
     notifyListeners();
-    debugPrint("AppState Restored: role=$_userRole, dept=$_departmentId, batch=$_selectedBatchId");
   }
 
   Future<void> _save() async {
-    final prefs = await SharedPreferences.getInstance();
-    _setOrRemove(prefs, _keyBatchId, _selectedBatchId);
-    _setOrRemove(prefs, _keyBatchName, _selectedBatchName);
-    _setOrRemove(prefs, _keyDeptId, _departmentId);
-    _setOrRemove(prefs, _keyDeptName, _departmentName);
-    await prefs.setBool(_keyIsAdmin, _isAdmin);
-    _setOrRemove(prefs, _keyUserEmail, _userEmail);
-    _setOrRemove(prefs, _keyUserRole, _userRole);
-    _setOrRemove(prefs, _keyStudentUsn, _studentUsn);
+    try {
+      final prefs = SharedPreferencesAsync();
+      await _setOrRemove(prefs, _keyBatchId, _selectedBatchId);
+      await _setOrRemove(prefs, _keyBatchName, _selectedBatchName);
+      await _setOrRemove(prefs, _keyDeptId, _departmentId);
+      await _setOrRemove(prefs, _keyDeptName, _departmentName);
+      await prefs.setBool(_keyIsAdmin, _isAdmin);
+      await _setOrRemove(prefs, _keyUserEmail, _userEmail);
+      await _setOrRemove(prefs, _keyUserRole, _userRole);
+      await _setOrRemove(prefs, _keyStudentUsn, _studentUsn);
+    } catch (e) {
+      debugPrint("AppState save error: $e");
+    }
   }
 
-  void _setOrRemove(SharedPreferences prefs, String key, String? value) {
+  Future<void> _setOrRemove(SharedPreferencesAsync prefs, String key, String? value) async {
     if (value != null) {
-      prefs.setString(key, value);
+      await prefs.setString(key, value);
     } else {
-      prefs.remove(key);
+      await prefs.remove(key);
     }
   }
 

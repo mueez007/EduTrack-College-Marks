@@ -61,6 +61,24 @@ class MarkCalculationService {
         finalInternalTotal = (roundedReducedIA + assignMarks + labValue + labIaValue).toDouble(); 
         break;
 
+      case "LAB_CE_AND_LAB_IA": // CE (30) + Lab IA (50→20) = 50
+        // CE: direct input out of 30 (stored in projectOrAssignment)
+        final int ceMax = subjectData['maxAssignment'] ?? 30;
+        final int ceMarks = (projAssignMarks).clamp(0, ceMax);
+
+        // Lab IA: raw input out of 50, reduced to 20 with ceiling rounding
+        final int labIaMax = subjectData['maxLabIa'] ?? 50;
+        final int rawLabIa = (labIaMarks ?? 0).clamp(0, labIaMax);
+        final double reducedLabIaValue = (rawLabIa / 50.0) * 20.0;
+        final int roundedLabIa = reducedLabIaValue.ceil();
+
+        finalInternalTotal = (ceMarks + roundedLabIa).toDouble();
+        break;
+
+      case "NO_IA": // No IA marks (direct exam only subjects)
+        finalInternalTotal = 0.0;
+        break;
+
       default:
         finalInternalTotal = 0.0;
         break;
@@ -101,6 +119,10 @@ class MarkCalculationService {
 
       case "FIFTY_FIFTY_RAW":
          calculatedTotal = finalIA + finalExam;
+         break;
+
+      case "DIRECT_100_NO_IA": // Direct 100 marks, no IA component
+         calculatedTotal = finalExam.toDouble();
          break;
 
       default:

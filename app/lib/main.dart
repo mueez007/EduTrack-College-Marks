@@ -21,7 +21,11 @@ void main() async {
   );
 
   final appState = AppState();
-  await appState.init();
+  try {
+    await appState.init();
+  } catch (e) {
+    debugPrint('AppState init failed (will start fresh): $e');
+  }
 
   runApp(
     ChangeNotifierProvider.value(
